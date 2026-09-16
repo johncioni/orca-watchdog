@@ -18,15 +18,17 @@ It handles three conditions:
   banner, then sends one resume prompt.
 - **API outage** — a terminal shows an outage banner (Claude Code's own
   `API Error: 5xx / Connection error / overloaded_error`, or Codex's error line).
-  The watchdog waits out a hold, re-checks the relevant status page
+  The watchdog waits out a hold, re-checks the provider's status feed
   (`status.claude.com` / `status.openai.com`), and resumes once the incident
   clears.
 - **Codex limit with no reset time** — asks you what to do in a native macOS
   alert; nothing is sent until you choose **Continue** or **Wait 1h**.
 
-It is plain Node with no dependencies, and its only network access is a
-lightweight connectivity probe (before any resume) and the two status pages
-(contacted only when an outage resume is actually due).
+It watches **Claude Code**, **Codex**, and **Gemini CLI** terminals (see
+[Supported agents](#supported-agents)). It is plain Node with no dependencies,
+and its only network access is a lightweight connectivity probe (before any
+resume) and the provider status feeds (contacted only when an outage resume is
+actually due).
 
 > [!IMPORTANT]
 > The watchdog's entire blast radius is `orca terminal send` into your live
@@ -160,8 +162,9 @@ orca-watchdog start
 ```
 
 Your pause state and tracked events are preserved across updates. Downgrading to
-a version from before the reset-less alert feature causes that version to back up
-and reset a state file that contains the newer event kind.
+a version from before the reset-less alert feature, or from before Gemini
+support, causes that version to back up and reset a state file that contains the
+newer event kind or platform.
 
 ## Remove
 
@@ -233,10 +236,10 @@ The details behind the diagram:
   per event, with up to two retries 30 minutes apart before it gives up loudly in
   the log. If the banner is still on screen but its reset time moves materially
   later, the watchdog honours the new time and keeps waiting.
-- **API outage.** Waits 10 minutes, then before each send re-checks the relevant
-  status page. A `major`/`critical` incident holds the send without consuming an
-  attempt — and so does a status page that can't be reached or returns an
-  unexpected response: the gate is **fail-closed**, so only a confirmed-healthy
+- **API outage.** Waits 10 minutes, then before each send re-checks the provider's
+  status feed. A `major`/`critical` Statuspage indicator (or an open Google Cloud
+  incident naming the product) holds the send without consuming an attempt — and
+  so does a feed that can't be reached or returns an unexpected response: the gate is **fail-closed**, so only a confirmed-healthy
   status lets the resume proceed (`hold: provider health unverifiable` is logged
   otherwise). Up to 6 sends 30 minutes apart, with a hard stop 24 hours after
   detection. Codex terminals are additionally held while `Reconnecting... N/5` or
@@ -260,12 +263,54 @@ The details behind the diagram:
 
 A few invariants worth stating plainly: every kind **refuses to send when the
 terminal's last line is a shell prompt** (the agent has exited) or when the input
-box already holds a draft. Outage detection is scoped to terminals Orca identifies
-as Claude Code or Codex; rate-limit detection is generic. Untrusted terminal text
+box already holds a draft (including Gemini's `*`-glyph box). Outage detection is
+scoped to Claude Code's `API Error` banner (accepted on Claude-identified and
+unidentified terminals alike) and to Codex's error line on Codex-identified
+terminals only; rate-limit detection is generic, with agent-specific idle chrome
+recognised for Gemini CLI. Untrusted terminal text
 is length-capped and sanitized (secrets redacted) before it is matched or logged,
 and a malformed read or parse on one terminal can never abort the tick for the
 others. Network access is limited to the connectivity probe (once per tick that
-has a send due) and the two status pages (only when an outage send is due).
+has a send due) and the provider status feeds (only when an outage send is due,
+at most once per provider per tick).
+
+## Supported agents
+
+Every agent the watchdog understands is one entry in a small, frozen provider
+registry inside `watchdog.mjs`. Orca tells the watchdog which agent a terminal
+runs (`agentIdentity`), and the registry entry for that agent declares what may
+be detected, how its idle input box looks, and where its status feed lives.
+Anything not in the registry is `unknown`: rate-limit banners are still
+detected generically, Claude Code's own `API Error` outage banner is still
+recognised (it is unmistakable, and the terminal is then treated as Claude),
+but Codex's `■` error line and all agent-specific chrome require Orca's
+identity.
+
+| Agent | Rate limit | API outage | Status feed | Notes |
+|---|---|---|---|---|
+| Claude Code | yes | yes | `status.claude.com` (Statuspage) | Reference behaviour. |
+| Codex | yes (+ reset-less alert) | yes (`■` error line) | `status.openai.com` (Statuspage) | Held while `Reconnecting… N/5` is on screen. |
+| Gemini CLI | yes | no | Google Cloud `incidents.json`, product *Vertex Gemini API* | `Usage limit reached for <model>.` / `Access resets at <time>.` The reset clock is parsed as **local time**; a trailing `PST`/`PDT` is ignored for now. Gemini's high-demand fallback line is transient and self-heals, so no outage rule. |
+
+A registry entry carries: the Orca identities that map to it; which event kinds
+it may raise (`limit`, `outage`, reset-less `limitOpen`); its limit rule
+(generic, or Codex's `■` form); source-verified outage patterns; screen chrome
+that may legitimately follow a banner while the agent is still stalled (so a
+stale banner with real output after it is ignored); a draft pattern so the
+watchdog never types into an input box that already holds text; and a status
+adapter (`statuspage`, `gcp-incidents`, or `none`). Every feed-backed adapter is
+fail-closed: a feed that cannot be fetched or parsed holds the resume rather than
+allowing it. (Gemini's Google Cloud adapter is declared but not yet queried,
+because Gemini raises no outage events.)
+
+To exercise a provider without a live agent, use the fakes under `e2e/`:
+`node e2e/fake-tui.mjs <file> --gemini "3:00 PM PST"` prints Gemini's real
+banner and idle box (`--outage` for Claude's outage banner, no flag for Claude's
+limit banner), and `node e2e/status-stub.mjs <port> --gcp "Vertex Gemini API"
+open,closed,none` serves Google Cloud-shaped incident feeds on loopback (the
+bare form serves Statuspage indicators). Point the daemon at a stub with
+`WATCHDOG_STATUS_URL_<PLATFORM>` (loopback URLs only). Adding an agent is a
+registry entry plus fixtures from a real session; see `CLAUDE.md`.
 
 ## Contributing & security
 

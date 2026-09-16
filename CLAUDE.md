@@ -13,11 +13,21 @@ agent TUI and sends a resume prompt when it is safe to:
 - **API outage:** Claude Code's own `API Error: 5xx / Connection error /
   overloaded_error` banner, or Codex's `■ …` error line (source-verified
   wording, Codex-identified terminals only); resumes after a hold, gated on
-  `status.claude.com` / `status.openai.com`.
+  the provider's status feed (Statuspage for Claude/OpenAI, Google Cloud
+  `incidents.json` for Gemini), fail-closed.
 
-Installed by `install.sh` (writes the plist, `launchctl bootstrap`), removed by
-`uninstall.sh`. Kill switch lives under `~/.local/state`. See `README.md` for
-run/status flags.
+Per-agent behaviour lives in the frozen `PROVIDERS` registry in `watchdog.mjs`
+(claude, codex, gemini; anything else is `unknown`). Adding an agent = one
+registry entry + fixtures captured from a real session (plan:
+`docs/superpowers/plans/2026-09-11-multi-agent-detection.md`).
+
+Packaged as a Homebrew formula (`johncioni/tap/orca-watchdog`) and as an
+archive whose `install.sh` copies the release into versioned storage under
+`~/.local` and links the command, leaving the service stopped until
+`orca-watchdog start` writes the plist and bootstraps launchd (`uninstall.sh`
+reverses it). **John's live daemon is the Homebrew install**; `install.sh` is
+for archive users. Kill switch lives under `~/.local/state`.
+See `README.md` for run/status flags.
 
 Names: GitHub repo `orca-watchdog`; Orca repo card **Orca Watchdog**;
 Linear team **Orca Watchdog**, key `DOG`, workspace `johncioni`.
@@ -119,14 +129,21 @@ the work across sessions.
   artifact link, if published); link the worktree with `--linear-issue DOG-n`.
 - Keep status in sync at the gates: In Progress on dispatch, a comment with
   the PR at review, Done after merge — and, when `watchdog.mjs` or the plist
-  changed, after the post-merge `install.sh` deploy has been verified.
+  changed, after the post-merge deploy (release + `brew upgrade`) has been
+  verified.
 
 ## Safety
 
 - Never test against live Orca terminals from an agent session; use
   `--dry-run` or the fake TUI in `e2e/fake-tui.mjs`.
-- **Deployment is a post-merge step, owned by the orchestrator:** after the
-  PR merges, run `install.sh` from the main checkout (launchd caches the
-  plist). Never run `install.sh` from a feature worktree: it would repoint the
-  live LaunchAgent at an unmerged, disposable checkout. `--status` shows
-  stored events, not service health; check `launchctl print gui/$(id -u)/com.john.orca-watchdog`.
+- **Deployment is a post-merge, post-release step, owned by the orchestrator.**
+  The live daemon on John's machine is the **Homebrew** install: cut a release
+  (version bump + tag + tap formula bump), then
+  `orca-watchdog stop` → `brew upgrade johncioni/tap/orca-watchdog` →
+  `orca-watchdog doctor && orca-watchdog start` (an in-place re-cut of the same
+  version needs `brew reinstall`). **Never run `install.sh` on this machine**:
+  it would create a competing `~/.local` archive install beside the brew one,
+  and from a feature worktree it would stage unmerged, unreviewed code as an
+  installable release. `install.sh` remains the documented path for archive
+  users only. `--status` shows stored events, not service health; check
+  `orca-watchdog doctor` or `launchctl print gui/$(id -u)/com.john.orca-watchdog`.
