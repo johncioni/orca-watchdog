@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { detectBanner, parseResetTime, reconcile, eventKey, stripAnsi, sanitize, hasOutageLine, inferPlatform,
   SCHEDULE, OUTAGE_RESUME_TEXT, newEvent, validateEvent, parseStateFile } from './watchdog.mjs';
 import { isShellPrompt, isInputOccupied } from './watchdog.mjs';
-import { statusUrlFor, fetchIndicator, suppressedByStatus } from './watchdog.mjs';
+import { statusUrlFor, fetchIndicator, fetchGcpIncidents, suppressedByStatus } from './watchdog.mjs';
 import { CONNECTIVITY_URL, connectivityUrl, hasConnectivity } from './watchdog.mjs';
 import { tick, RESUME_TEXT } from './watchdog.mjs';
 
@@ -904,6 +904,75 @@ test('fetchIndicator returns null on non-200, bad JSON, missing field, or throw'
   assert.equal(await fetchIndicator(CLAUDE_URL, fakeFetch(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('x'); } }))), null);
   assert.equal(await fetchIndicator(CLAUDE_URL, fakeFetch(() => okJson({ page: {} }))), null);
   assert.equal(await fetchIndicator(CLAUDE_URL, fakeFetch(() => { throw new TypeError('redirect'); })), null);
+});
+
+const GCP_PRODUCT = 'Vertex Gemini API';
+const gcpIncident = ({ end, status = 'AVAILABLE', product = GCP_PRODUCT } = {}) => ({
+  id: 'incident-1', number: '123', begin: '2026-09-15T12:00:00+00:00',
+  created: '2026-09-15T12:01:00+00:00', end, modified: '2026-09-15T12:02:00+00:00',
+  external_desc: 'Fixture incident', updates: [],
+  most_recent_update: { created: '2026-09-15T12:01:00+00:00', modified: '2026-09-15T12:02:00+00:00',
+    when: '2026-09-15T12:02:00+00:00', text: 'Fixture update', status },
+  status_impact: 'SERVICE_DISRUPTION', severity: 'medium', service_key: 'fixture-service',
+  service_name: 'Fixture service',
+  affected_products: [{ title: product, id: 'product-1', current_title: product }],
+  uri: 'https://status.cloud.google.com/incidents/incident-1',
+  currently_affected_locations: [], previously_affected_locations: [],
+});
+
+test('fetchGcpIncidents reports an open matching incident as impacted', async () => {
+  const f = fakeFetch(() => okJson([
+    gcpIncident({ end: null, status: 'SERVICE_DISRUPTION' }),
+    gcpIncident({ end: '2026-09-15T13:00:00+00:00' }),
+  ]));
+  assert.equal(await watchdog.fetchGcpIncidents('https://status.cloud.google.com/incidents.json', GCP_PRODUCT, f), 'impacted');
+  assert.equal(f.calls[0].opts.redirect, 'error');
+  assert.ok(f.calls[0].opts.signal instanceof AbortSignal);
+});
+
+test('fetchGcpIncidents treats either missing end or non-AVAILABLE latest status as open', async () => {
+  assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT,
+    fakeFetch(() => okJson([gcpIncident({ end: undefined })]))), 'impacted');
+  assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT,
+    fakeFetch(() => okJson([gcpIncident({ end: '2026-09-15T13:00:00+00:00', status: 'SERVICE_OUTAGE' })]))), 'impacted');
+});
+
+test('fetchGcpIncidents reports closed or non-matching incidents as ok', async () => {
+  const closed = gcpIncident({ end: '2026-09-15T13:00:00+00:00' });
+  const otherProduct = gcpIncident({ end: null, status: 'SERVICE_OUTAGE', product: 'Other product' });
+  assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT, fakeFetch(() => okJson([closed, otherProduct]))), 'ok');
+});
+
+test('fetchGcpIncidents holds on malformed payloads or a missing product', async () => {
+  for (const body of [{ incidents: [] }, [null], [{ affected_products: 'Vertex Gemini API' }]]) {
+    assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT, fakeFetch(() => okJson(body))), null);
+  }
+  for (const product of [undefined, null, '', 123]) {
+    assert.equal(await watchdog.fetchGcpIncidents('gcp', product, fakeFetch(() => okJson([]))), null);
+  }
+});
+
+test('fetchGcpIncidents returns null on non-ok, bad JSON, or fetch failure', async () => {
+  assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT,
+    fakeFetch(() => ({ ok: false, status: 503, json: async () => [] }))), null);
+  assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT,
+    fakeFetch(() => ({ ok: true, json: async () => { throw new SyntaxError('bad json'); } }))), null);
+  assert.equal(await watchdog.fetchGcpIncidents('gcp', GCP_PRODUCT,
+    fakeFetch(() => { throw new TypeError('network'); })), null);
+});
+
+test('fetchHealth dispatches statuspage, gcp-incidents, none, and unknown kinds', async () => {
+  assert.deepEqual(await watchdog.fetchHealth({ kind: 'statuspage', url: 'status' }, 'resolved',
+    fakeFetch(() => okJson({ status: { indicator: 'major' } }))), { health: 'impacted', detail: 'major' });
+  assert.deepEqual(await watchdog.fetchHealth({ kind: 'statuspage', url: 'status' }, 'resolved',
+    fakeFetch(() => okJson({ status: { indicator: 'minor' } }))), { health: 'ok', detail: 'minor' });
+  assert.deepEqual(await watchdog.fetchHealth({ kind: 'statuspage', url: 'status' }, 'resolved',
+    fakeFetch(() => { throw new TypeError('network'); })), { health: null });
+  assert.deepEqual(await watchdog.fetchHealth({ kind: 'gcp-incidents', url: 'gcp', product: GCP_PRODUCT }, 'resolved',
+    fakeFetch(() => okJson([gcpIncident({ end: null, status: 'SERVICE_OUTAGE' })]))), { health: 'impacted' });
+  assert.deepEqual(await watchdog.fetchHealth({ kind: 'none' }, undefined), { health: 'ok' });
+  assert.deepEqual(await watchdog.fetchHealth({ kind: 'other' }, 'resolved'), { health: null });
+  assert.deepEqual(await watchdog.fetchHealth(null, 'resolved'), { health: null });
 });
 
 test('hasConnectivity: ok ⇒ true; non-ok / thrown / redirect ⇒ false (DOG-19)', async () => {
@@ -1857,12 +1926,34 @@ test('sanitize strips ANSI, collapses whitespace and truncates', () => {
 
 test('status-stub serves the scripted indicator sequence and repeats the last', async () => {
   const { startStub } = await import('./e2e/status-stub.mjs');
-  const stub = await startStub(0, ['major', 'none']);
+  const stub = await startStub(0, ['major', 'major', 'none']);
   try {
     const get = async () => (await (await fetch(`http://127.0.0.1:${stub.port}/api/v2/status.json`)).json()).status.indicator;
     assert.equal(await get(), 'major');
+    assert.equal(await fetchIndicator(`http://127.0.0.1:${stub.port}/api/v2/status.json`, fetch), 'major');
+    assert.equal(await fetchIndicator(`http://127.0.0.1:${stub.port}/api/v2/status.json`, fetch), 'none');
     assert.equal(await get(), 'none');
-    assert.equal(await get(), 'none');
+  } finally { await stub.close(); }
+});
+
+test('status-stub GCP mode serves open, closed, and empty incident sequences', async () => {
+  const { startGcpStub } = await import('./e2e/status-stub.mjs');
+  const product = 'Vertex AI';
+  const stub = await startGcpStub(0, product, ['open', 'open', 'closed', 'closed', 'none']);
+  try {
+    const url = `http://127.0.0.1:${stub.port}/incidents.json`;
+    const get = async () => (await (await fetch(url)).json());
+    const open = await get();
+    assert.equal(open.length, 1);
+    assert.equal(open[0].end, null);
+    assert.equal(open[0].affected_products[0].title, product);
+    assert.equal(await fetchGcpIncidents(url, product, fetch), 'impacted');
+    const closed = await get();
+    assert.equal(closed.length, 1);
+    assert.equal(typeof closed[0].end, 'string');
+    assert.equal(await fetchGcpIncidents(url, product, fetch), 'ok');
+    assert.deepEqual(await get(), []);
+    assert.deepEqual(await get(), []);
   } finally { await stub.close(); }
 });
 
@@ -2157,6 +2248,16 @@ test('DOG-38 registry: defineProviders rejects malformed entries and duplicate i
   assert.throws(() => watchdog.defineProviders([validProvider({
     status: { kind: 'statuspage' },
   })]), { message: 'Provider test: status.url must be a string' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    status: { kind: 'other', url: 'https://status.example.test' },
+  })]), { message: 'Provider test: status.kind must be "statuspage", "gcp-incidents", or "none"' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    status: { kind: 'gcp-incidents', url: 'https://status.cloud.google.com/incidents.json' },
+  })]), { message: 'Provider test: status.product must be a non-empty string' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    status: { kind: 'gcp-incidents', product: 'Vertex Gemini API' },
+  })]), { message: 'Provider test: status.url must be a string' });
+  assert.doesNotThrow(() => watchdog.defineProviders([validProvider({ status: { kind: 'none' } })]));
 });
 
 test('DOG-38 registry: defineProviders supplies inert defaults for optional seams', () => {

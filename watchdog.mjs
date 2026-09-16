@@ -55,7 +55,7 @@ const KINDS = Object.keys(SCHEDULE);
 //                     so inferPlatform never consults them (behaviour unchanged).
 //   chrome.trailing — extra per-provider trailing-chrome lines; EMPTY this phase,
 //                     so isTrailingChromeFor ≡ isTrailingChrome for every platform.
-//   status          — Statuspage summary URL (env-overridable for the e2e stub).
+//   status          — provider health adapter config (env-overridable URL for the e2e stub).
 const freezeProvider = (provider) => {
   for (const value of Object.values(provider)) {
     if (value && typeof value === 'object' && !(value instanceof RegExp)) freezeProvider(value);
@@ -102,8 +102,15 @@ export function defineProviders(entries) {
       if (!(re instanceof RegExp)) invalid(`chrome.trailing[${index}]`, 'must be a RegExp');
     });
 
-    if (entry.status?.kind !== 'statuspage') invalid('status.kind', 'must be "statuspage"');
-    if (typeof entry.status.url !== 'string') invalid('status.url', 'must be a string');
+    const statusKind = entry.status?.kind;
+    if (!['statuspage', 'gcp-incidents', 'none'].includes(statusKind)) {
+      invalid('status.kind', 'must be "statuspage", "gcp-incidents", or "none"');
+    }
+    if (statusKind !== 'none' && typeof entry.status.url !== 'string') invalid('status.url', 'must be a string');
+    if (statusKind === 'gcp-incidents'
+      && (typeof entry.status.product !== 'string' || entry.status.product.length === 0)) {
+      invalid('status.product', 'must be a non-empty string');
+    }
 
     return freezeProvider({
       id: entry.id,
@@ -622,7 +629,8 @@ export async function hasConnectivity(fetchImpl = globalThis.fetch, url = CONNEC
   } catch { return false; }
 }
 
-// Fetch a Statuspage indicator. Never throws: any failure is null (fail open).
+// Fetch a Statuspage indicator. Never throws: any failure is null (fail-closed;
+// the outage gate holds on null).
 export async function fetchIndicator(url, fetchImpl = globalThis.fetch) {
   try {
     const r = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(10_000) });
@@ -634,6 +642,46 @@ export async function fetchIndicator(url, fetchImpl = globalThis.fetch) {
 }
 
 export const suppressedByStatus = (indicator) => indicator === 'major' || indicator === 'critical';
+
+// Fetch Google Cloud incidents for one exact product title. Never throws: a
+// malformed or unverifiable feed is null so the outage gate holds fail-closed.
+export async function fetchGcpIncidents(url, product, fetchImpl = globalThis.fetch) {
+  if (typeof product !== 'string' || product.length === 0) return null;
+  try {
+    const r = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) return null;
+    const incidents = await r.json();
+    if (!Array.isArray(incidents)) return null;
+    for (const incident of incidents) {
+      if (!incident || typeof incident !== 'object' || Array.isArray(incident)) return null;
+      if ('affected_products' in incident && !Array.isArray(incident.affected_products)) return null;
+    }
+    const impacted = incidents.some((incident) => {
+      const latestStatus = incident.most_recent_update?.status;
+      const open = incident.end == null || incident.end === ''
+        || (typeof latestStatus === 'string' && latestStatus !== 'AVAILABLE');
+      return open && (incident.affected_products ?? []).some((affected) => affected?.title === product);
+    });
+    return impacted ? 'impacted' : 'ok';
+  } catch { return null; }
+}
+
+// Normalize provider-specific status feeds while retaining Statuspage detail
+// for the existing operational diagnostic (`provider health major`).
+export async function fetchHealth(statusConfig, url, fetchImpl = globalThis.fetch) {
+  try {
+    if (statusConfig?.kind === 'statuspage') {
+      const indicator = await fetchIndicator(url, fetchImpl);
+      if (indicator === null) return { health: null };
+      return { health: suppressedByStatus(indicator) ? 'impacted' : 'ok', detail: indicator };
+    }
+    if (statusConfig?.kind === 'gcp-incidents') {
+      return { health: await fetchGcpIncidents(url, statusConfig.product, fetchImpl) };
+    }
+    if (statusConfig?.kind === 'none') return { health: 'ok' };
+    return { health: null };
+  } catch { return { health: null }; }
+}
 
 // --- imperative shell ---
 
@@ -935,7 +983,7 @@ export async function tick({ dryRun }, depsIn = {}) {
     catch (e) { log('debug', `choice reaper failed: ${sanitize(e.message)}`); }
   }
 
-  const indicators = new Map();   // platform → indicator, fetched at most once per tick
+  const health = new Map();       // platform → health result, fetched at most once per tick
   let online = null;              // connectivity, probed lazily once per real (non-dry-run) tick
   for (const key of sendCandidates) {
     const ev = events[key];
@@ -956,19 +1004,20 @@ export async function tick({ dryRun }, depsIn = {}) {
     }
     if (!online) { waiting(ev.handle, 'offline'); log('debug', `held ${ev.handle}: offline`); continue; }
     if (ev.kind === 'outage') {   // 1. status gate (validateEvent guarantees a known platform)
-      if (!indicators.has(ev.platform)) {
+      if (!health.has(ev.platform)) {
         const { url, warn } = statusUrlFor(ev.platform, deps.env);
         if (warn) log('warn', warn);
-        indicators.set(ev.platform, await fetchIndicator(url, deps.fetchImpl));
+        health.set(ev.platform, await fetchHealth(statusConfigFor(ev.platform), url, deps.fetchImpl));
       }
-      const indicator = indicators.get(ev.platform);
+      const result = health.get(ev.platform);
       // Fail closed: an unverifiable status (fetch failed/timed out/redirected/
       // bad JSON ⇒ null) must not authorize a resume during a possibly-continuing
       // outage. Only a confirmed-healthy indicator allows the send (DOG-24).
-      if (indicator === null) { waiting(ev.handle, 'provider health unknown'); log('warn', 'hold: provider health unverifiable'); continue; }
-      if (suppressedByStatus(indicator)) {
-        waiting(ev.handle, 'provider health ' + indicator);
-        log('debug', `skip ${ev.handle}: ${ev.platform} status is ${indicator}`); continue;
+      if (result.health === null) { waiting(ev.handle, 'provider health unknown'); log('warn', 'hold: provider health unverifiable'); continue; }
+      if (result.health === 'impacted') {
+        const detail = result.detail ?? 'impacted';
+        waiting(ev.handle, 'provider health ' + detail);
+        log('debug', `skip ${ev.handle}: ${ev.platform} status is ${detail}`); continue;
       }
     }
     try {                                                                            // 2. idle check
