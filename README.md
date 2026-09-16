@@ -264,8 +264,10 @@ The details behind the diagram:
 A few invariants worth stating plainly: every kind **refuses to send when the
 terminal's last line is a shell prompt** (the agent has exited) or when the input
 box already holds a draft (including Gemini's `*`-glyph box). Outage detection is
-scoped to terminals Orca identifies as Claude Code or Codex; rate-limit detection
-is generic, with agent-specific idle chrome recognised for Gemini CLI. Untrusted terminal text
+scoped to Claude Code's `API Error` banner (accepted on Claude-identified and
+unidentified terminals alike) and to Codex's error line on Codex-identified
+terminals only; rate-limit detection is generic, with agent-specific idle chrome
+recognised for Gemini CLI. Untrusted terminal text
 is length-capped and sanitized (secrets redacted) before it is matched or logged,
 and a malformed read or parse on one terminal can never abort the tick for the
 others. Network access is limited to the connectivity probe (once per tick that
@@ -279,7 +281,10 @@ registry inside `watchdog.mjs`. Orca tells the watchdog which agent a terminal
 runs (`agentIdentity`), and the registry entry for that agent declares what may
 be detected, how its idle input box looks, and where its status feed lives.
 Anything not in the registry is `unknown`: rate-limit banners are still
-detected generically, but outage detection and agent-specific chrome are off.
+detected generically, Claude Code's own `API Error` outage banner is still
+recognised (it is unmistakable, and the terminal is then treated as Claude),
+but Codex's `■` error line and all agent-specific chrome require Orca's
+identity.
 
 | Agent | Rate limit | API outage | Status feed | Notes |
 |---|---|---|---|---|
@@ -293,8 +298,10 @@ it may raise (`limit`, `outage`, reset-less `limitOpen`); its limit rule
 that may legitimately follow a banner while the agent is still stalled (so a
 stale banner with real output after it is ignored); a draft pattern so the
 watchdog never types into an input box that already holds text; and a status
-adapter (`statuspage`, `gcp-incidents`, or `none`). Every adapter is fail-closed:
-a feed that cannot be fetched or parsed holds the resume rather than allowing it.
+adapter (`statuspage`, `gcp-incidents`, or `none`). Every feed-backed adapter is
+fail-closed: a feed that cannot be fetched or parsed holds the resume rather than
+allowing it. (Gemini's Google Cloud adapter is declared but not yet queried,
+because Gemini raises no outage events.)
 
 To exercise a provider without a live agent, use the fakes under `e2e/`:
 `node e2e/fake-tui.mjs <file> --gemini "3:00 PM PST"` prints Gemini's real

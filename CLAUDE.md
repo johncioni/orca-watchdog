@@ -22,9 +22,11 @@ registry entry + fixtures captured from a real session (plan:
 `docs/superpowers/plans/2026-09-11-multi-agent-detection.md`).
 
 Packaged as a Homebrew formula (`johncioni/tap/orca-watchdog`) and as an
-archive whose `install.sh` writes the plist and `launchctl bootstrap`s it
-(`uninstall.sh` removes it). **John's live daemon is the Homebrew install**;
-`install.sh` is for archive users. Kill switch lives under `~/.local/state`.
+archive whose `install.sh` copies the release into versioned storage under
+`~/.local` and links the command, leaving the service stopped until
+`orca-watchdog start` writes the plist and bootstraps launchd (`uninstall.sh`
+reverses it). **John's live daemon is the Homebrew install**; `install.sh` is
+for archive users. Kill switch lives under `~/.local/state`.
 See `README.md` for run/status flags.
 
 Names: GitHub repo `orca-watchdog`; Orca repo card **Orca Watchdog**;
@@ -140,8 +142,8 @@ the work across sessions.
   `orca-watchdog stop` → `brew upgrade johncioni/tap/orca-watchdog` →
   `orca-watchdog doctor && orca-watchdog start` (an in-place re-cut of the same
   version needs `brew reinstall`). **Never run `install.sh` on this machine**:
-  it would create a competing `~/.local` install beside the brew one, and from
-  a feature worktree it would also repoint a LaunchAgent at an unmerged,
-  disposable checkout. `install.sh` remains the documented path for archive
+  it would create a competing `~/.local` archive install beside the brew one,
+  and from a feature worktree it would stage unmerged, unreviewed code as an
+  installable release. `install.sh` remains the documented path for archive
   users only. `--status` shows stored events, not service health; check
   `orca-watchdog doctor` or `launchctl print gui/$(id -u)/com.john.orca-watchdog`.
