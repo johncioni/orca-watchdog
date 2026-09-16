@@ -51,10 +51,9 @@ const KINDS = Object.keys(SCHEDULE);
 //                     bespoke multi-line CODEX_* parser); kept deliberately distinct.
 //   outage[]        — TUI outage shapes; alsoUnknown also applies the row to the
 //                     'unknown' identity (only Claude's does, as before).
-//   fingerprint[]   — window regexes for future identity routing; EMPTY this phase,
-//                     so inferPlatform never consults them (behaviour unchanged).
-//   chrome.trailing — extra per-provider trailing-chrome lines; EMPTY this phase,
-//                     so isTrailingChromeFor ≡ isTrailingChrome for every platform.
+//   fingerprint[]   — window regexes for identity routing.
+//   chrome.trailing — extra per-provider trailing-chrome lines.
+//   chrome.draft    — extra per-provider occupied-input lines.
 //   status          — provider health adapter config (env-overridable URL for the e2e stub).
 const freezeProvider = (provider) => {
   for (const value of Object.values(provider)) {
@@ -95,11 +94,16 @@ export function defineProviders(entries) {
       if (!(re instanceof RegExp)) invalid(`fingerprint[${index}]`, 'must be a RegExp');
     });
 
-    const chrome = entry.chrome ?? { trailing: [] };
+    const chrome = entry.chrome ?? { trailing: [], draft: [] };
     const trailing = chrome.trailing ?? [];
     if (!Array.isArray(trailing)) invalid('chrome.trailing', 'must be an array');
     trailing.forEach((re, index) => {
       if (!(re instanceof RegExp)) invalid(`chrome.trailing[${index}]`, 'must be a RegExp');
+    });
+    const draft = chrome.draft ?? [];
+    if (!Array.isArray(draft)) invalid('chrome.draft', 'must be an array');
+    draft.forEach((re, index) => {
+      if (!(re instanceof RegExp)) invalid(`chrome.draft[${index}]`, 'must be a RegExp');
     });
 
     const statusKind = entry.status?.kind;
@@ -119,7 +123,7 @@ export function defineProviders(entries) {
       limit: { ...entry.limit },
       outage: outage.map((row) => ({ ...row })),
       fingerprint: [...fingerprint],
-      chrome: { ...chrome, trailing: [...trailing] },
+      chrome: { ...chrome, trailing: [...trailing], draft: [...draft] },
       status: { ...entry.status },
     });
   });
@@ -155,6 +159,19 @@ export const PROVIDERS = defineProviders([
     fingerprint: [],
     chrome: { trailing: [] },
     status: { kind: 'statuspage', url: 'https://status.openai.com/api/v2/status.json' },
+  },
+  {
+    id: 'gemini',
+    agentIdentity: ['gemini'],
+    kinds: { limit: true, outage: false, limitOpen: false },
+    limit: { rule: 'generic' },
+    outage: [],
+    fingerprint: [],
+    chrome: {
+      trailing: [/^[▄▀\s]+$/, /^\*\s+Type your message or @path\/to\/file\s*$/],
+      draft: [/^\*\s+(?!Type your message or @path\/to\/file\s*$)\S/],
+    },
+    status: { kind: 'gcp-incidents', url: 'https://status.cloud.google.com/incidents.json', product: 'Vertex Gemini API' },
   },
 ]);
 
@@ -248,8 +265,6 @@ const isChrome = (l) => CHROME_RES.some((re) => re.test(l));
 const isTrailingChrome = (l) => isChrome(l) || FOOTER_RE.test(l);
 // Per-provider trailing-chrome seam (DOG-37): base trailing chrome OR a line a
 // provider declares as its own trailing chrome, consulted only for that platform.
-// Every chrome.trailing array is empty this phase, so this ≡ isTrailingChrome for
-// all platforms (including 'unknown', which has no provider).
 const isTrailingChromeFor = (platform, l) =>
   isTrailingChrome(l) || (providerFor(platform)?.chrome?.trailing?.some((re) => re.test(l)) ?? false);
 const lastIndex = (arr, pred) => { let i = -1; arr.forEach((x, j) => { if (pred(x)) i = j; }); return i; };
@@ -333,6 +348,9 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     if (window.slice(l + 1).every((line) => isTrailingChromeFor(platform, line))) {
       limit = { kind: 'limit', bannerText: sanitize(window.filter(isRelevant).join(' | '), 600),
         matchedLine: window[l], patternId: 'limit', index: l };
+      // Gemini publishes an absolute reset clock and callers need the resolved
+      // local instant; the trailing timezone abbreviation is intentionally ignored.
+      if (platform === 'gemini') limit.resetAt = parseResetTime(limit.bannerText, now)?.toISOString() ?? null;
     }
   }
 
@@ -572,11 +590,13 @@ const INPUT_DRAFT_RE = /^[>›]\s+(?!Ask Codex to do anything\s*$)\S/;
 // The empty prompt ("~ %") has nothing after the glyph, so it does not match and
 // is left to isShellPrompt's exited-to-shell drop (DOG-24).
 const SHELL_CMD_RE = /(?:^|\s)[$%#❯➜λ❱]\s+\S/;
-export function isInputOccupied(tail) {
+export function isInputOccupied(tail, platform = 'unknown') {
   // .trim() (both ends) mirrors detection, so an indented draft ("  > text") is
   // not missed. Strictly safer: it can only add skips, never a send (DOG-24).
   const lines = tail.map((l) => stripAnsi(l).trim());
   if (lines.some((l) => INPUT_DRAFT_RE.test(l))) return true;
+  const providerDraft = providerFor(platform)?.chrome?.draft ?? [];
+  if (lines.some((l) => providerDraft.some((re) => re.test(l)))) return true;
   const last = lines.filter(Boolean).at(-1);
   return last !== undefined && SHELL_CMD_RE.test(last);
 }
@@ -1057,7 +1077,7 @@ export async function tick({ dryRun }, depsIn = {}) {
       observe('resolved', ev.handle);   // the event is gone: don't leave a stale waiting reason in status
       delete events[key]; deps.saveState(events); continue;
     }
-    if (isInputOccupied(tail)) {                                                     // 4b. draft guard
+    if (isInputOccupied(tail, ev.platform)) {                                        // 4b. draft guard
       waiting(ev.handle, 'draft input');
       log('info', `skip ${ev.handle}: input box holds a draft; event untouched`); continue;
     }
