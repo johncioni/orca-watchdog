@@ -20,7 +20,11 @@ const CODEX_BANNER = [
   "You've hit your usage limit. Try again at Sep 8th, 2026 2:00 PM.",
 ];
 const GEMINI_BANNER = [
-  'Quota exceeded: daily limit reached for gemini-3-pro. Resets in 2 hours 15 minutes.',
+  'Usage limit reached for gemini-2.5-pro.',
+  'Access resets at 3:00 PM PST.',
+  '▄'.repeat(10),
+  ' *   Type your message or @path/to/file',
+  '▀'.repeat(10),
 ];
 
 // --- detectBanner ---
@@ -35,8 +39,27 @@ test('detects Codex limit banner', () => {
   assert.ok(detectBanner(CODEX_BANNER));
 });
 
-test('detects Gemini quota banner', () => {
-  assert.ok(detectBanner(GEMINI_BANNER));
+test('detects Gemini limit banner with local reset time and real idle chrome', () => {
+  const today = new Date('2026-09-16T14:00:00');
+  const tomorrow = new Date('2026-09-16T18:00:00');
+  for (const [now, expected] of [
+    [today, new Date('2026-09-16T15:00:00')],
+    [tomorrow, new Date('2026-09-17T15:00:00')],
+  ]) {
+    const banner = detectBanner(GEMINI_BANNER, 'gemini', now);
+    assert.equal(banner?.kind, 'limit');
+    assert.equal(banner?.resetAt, expected.toISOString());
+    assert.equal(banner?.patternId, 'limit');
+  }
+});
+
+test('Gemini limit chrome is platform-scoped and rejects stale banners', () => {
+  assert.equal(detectBanner([
+    ...GEMINI_BANNER.slice(0, 2),
+    '✦ Here is the file…',
+    ...GEMINI_BANNER.slice(2),
+  ], 'gemini', new Date('2026-09-16T14:00:00')), null);
+  assert.equal(detectBanner(GEMINI_BANNER, 'unknown', new Date('2026-09-16T14:00:00')), null);
 });
 
 test('limit bannerText is sanitized before storage', () => {
@@ -315,6 +338,10 @@ test('inferPlatform maps the codex pattern to codex', () => {
   assert.equal(inferPlatform({ agentIdentity: undefined }, { patternId: 'codex-api-error' }), 'codex');
 });
 
+test('inferPlatform maps Gemini agent identity to gemini', () => {
+  assert.equal(inferPlatform({ agentIdentity: 'gemini' }), 'gemini');
+});
+
 // --- parseResetTime ---
 
 const NOW = new Date('2026-07-23T23:00:00'); // 11pm local
@@ -442,6 +469,12 @@ const V2 = { ...V1, kind: 'limit', platform: 'unknown', alertedAt: null };
 const LO = (over = {}) => ({ handle: H, kind: 'limit-open', platform: 'codex', bannerText: 'x',
   detectedAt: NOW.toISOString(), resetAt: NOW.toISOString(), attempts: 0, lastAttemptAt: null,
   status: 'awaiting-user', alertedAt: null, episodeId: 'ep-1', ...over });
+
+test('validateEvent accepts Gemini limits and rejects unsupported Gemini kinds', () => {
+  assert.equal(validateEvent(H, { ...V2, platform: 'gemini' }), null);
+  assert.match(validateEvent(H, { ...V2, kind: 'outage', platform: 'gemini' }), /platform/);
+  assert.match(validateEvent(H, LO({ platform: 'gemini' })), /platform/);
+});
 
 test('validateEvent: well-formed limit-open accepted (DOG-20)', () => {
   for (const status of ['awaiting-user', 'dismissed', 'waiting']) {
@@ -1592,6 +1625,15 @@ test('isInputOccupied: Codex draft counts, the placeholder does not', () => {
   assert.equal(isInputOccupied([CODEX_ERR, '›', CODEX_FOOTER]), false);
 });
 
+test('isInputOccupied: Gemini draft counts only for Gemini; the placeholder does not', () => {
+  const draft = [' *   half-typed draft'];
+  assert.equal(isInputOccupied(draft, 'gemini'), true);
+  assert.equal(isInputOccupied([' *   Type your message or @path/to/file'], 'gemini'), false);
+  assert.equal(isInputOccupied(draft, 'claude'), false);
+  assert.equal(isInputOccupied(draft, 'codex'), false);
+  assert.equal(isInputOccupied(draft, 'unknown'), false);
+});
+
 test('isInputOccupied: a shell prompt carrying an unsubmitted command is occupied (DOG-24)', () => {
   // Belt-and-suspenders behind the final-block detection guard: a populated shell
   // line ends in ordinary text, so a naive send would append+submit the command.
@@ -2138,8 +2180,8 @@ test('DOG-37 registry: OUTAGE_PATTERNS deep-equals the prior two-row table', () 
   assert.ok(hasOutageLine(['■ stream disconnected before completion']));
 });
 
-test('DOG-37 registry: PLATFORMS is exactly {claude, codex, unknown}', () => {
-  assert.deepEqual([...watchdog.PLATFORMS].sort(), ['claude', 'codex', 'unknown']);
+test('DOG-37 registry: PLATFORMS is exactly {claude, codex, gemini, unknown}', () => {
+  assert.deepEqual([...watchdog.PLATFORMS].sort(), ['claude', 'codex', 'gemini', 'unknown']);
 });
 
 test('DOG-37 registry: statusConfigFor maps claude/codex to the current status URLs', () => {
@@ -2198,8 +2240,11 @@ test('DOG-38 registry: every provider has the complete validated shape and a uni
     provider.fingerprint.forEach((re) => assert.ok(re instanceof RegExp));
     assert.ok(Array.isArray(provider.chrome.trailing));
     provider.chrome.trailing.forEach((re) => assert.ok(re instanceof RegExp));
-    assert.equal(provider.status.kind, 'statuspage');
+    assert.ok(Array.isArray(provider.chrome.draft));
+    provider.chrome.draft.forEach((re) => assert.ok(re instanceof RegExp));
+    assert.equal(provider.status.kind, provider.id === 'gemini' ? 'gcp-incidents' : 'statuspage');
     assert.equal(typeof provider.status.url, 'string');
+    if (provider.id === 'gemini') assert.equal(provider.status.product, 'Vertex Gemini API');
   }
 });
 
@@ -2208,7 +2253,7 @@ test('DOG-38 registry: providers and all structural nested values are frozen and
   for (const provider of watchdog.PROVIDERS) {
     for (const value of [
       provider, provider.agentIdentity, provider.kinds, provider.limit, provider.outage,
-      ...provider.outage, provider.fingerprint, provider.chrome, provider.chrome.trailing,
+      ...provider.outage, provider.fingerprint, provider.chrome, provider.chrome.trailing, provider.chrome.draft,
       provider.status,
     ]) assert.ok(Object.isFrozen(value), `${provider.id} nested value must be frozen`);
   }
@@ -2242,6 +2287,9 @@ test('DOG-38 registry: defineProviders rejects malformed entries and duplicate i
   assert.throws(() => watchdog.defineProviders([validProvider({
     outage: [{ id: 'test-error', re: 'not a regex', alsoUnknown: false }],
   })]), { message: 'Provider test: outage[0].re must be a RegExp' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    chrome: { trailing: [], draft: ['not a regex'] },
+  })]), { message: 'Provider test: chrome.draft[0] must be a RegExp' });
   assert.throws(() => watchdog.defineProviders([validProvider(), validProvider()]), {
     message: 'Duplicate provider id: test',
   });
@@ -2271,10 +2319,18 @@ test('DOG-38 registry: defineProviders supplies inert defaults for optional seam
 
   assert.deepEqual(provider.outage, []);
   assert.deepEqual(provider.fingerprint, []);
-  assert.deepEqual(provider.chrome, { trailing: [] });
+  assert.deepEqual(provider.chrome, { trailing: [], draft: [] });
 });
 
 test('DOG-38 registry: provider and derived platform order is stable', () => {
-  assert.deepEqual(watchdog.PROVIDERS.map((provider) => provider.id), ['claude', 'codex']);
-  assert.deepEqual(watchdog.PLATFORMS, ['unknown', 'claude', 'codex']);
+  assert.deepEqual(watchdog.PROVIDERS.map((provider) => provider.id), ['claude', 'codex', 'gemini']);
+  assert.deepEqual(watchdog.PLATFORMS, ['unknown', 'claude', 'codex', 'gemini']);
+});
+
+test('DOG-40 registry: Gemini status config is GCP incidents for Vertex Gemini API', () => {
+  assert.deepEqual(watchdog.statusConfigFor('gemini'), {
+    kind: 'gcp-incidents',
+    url: 'https://status.cloud.google.com/incidents.json',
+    product: 'Vertex Gemini API',
+  });
 });
