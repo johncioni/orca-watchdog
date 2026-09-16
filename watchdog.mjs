@@ -56,7 +56,70 @@ const KINDS = Object.keys(SCHEDULE);
 //   chrome.trailing — extra per-provider trailing-chrome lines; EMPTY this phase,
 //                     so isTrailingChromeFor ≡ isTrailingChrome for every platform.
 //   status          — Statuspage summary URL (env-overridable for the e2e stub).
-export const PROVIDERS = Object.freeze([
+const freezeProvider = (provider) => {
+  for (const value of Object.values(provider)) {
+    if (value && typeof value === 'object' && !(value instanceof RegExp)) freezeProvider(value);
+  }
+  return Object.freeze(provider);
+};
+
+export function defineProviders(entries) {
+  const ids = new Set();
+  const providers = entries.map((entry) => {
+    const id = typeof entry?.id === 'string' && entry.id ? entry.id : '<unknown>';
+    const invalid = (field, expected) => { throw new Error(`Provider ${id}: ${field} ${expected}`); };
+
+    if (id === '<unknown>') invalid('id', 'must be a non-empty string');
+    if (ids.has(id)) throw new Error(`Duplicate provider id: ${id}`);
+    ids.add(id);
+    if (!Array.isArray(entry.agentIdentity) || !entry.agentIdentity.every((value) => typeof value === 'string')) {
+      invalid('agentIdentity', 'must be an array of strings');
+    }
+    if (!entry.kinds || typeof entry.kinds !== 'object') invalid('kinds', 'is required');
+    for (const kind of ['limit', 'outage', 'limitOpen']) {
+      if (typeof entry.kinds[kind] !== 'boolean') invalid(`kinds.${kind}`, 'must be a boolean');
+    }
+    if (!['generic', 'codex'].includes(entry.limit?.rule)) invalid('limit.rule', 'must be "generic" or "codex"');
+
+    const outage = entry.outage ?? [];
+    if (!Array.isArray(outage)) invalid('outage', 'must be an array');
+    outage.forEach((row, index) => {
+      if (typeof row?.id !== 'string') invalid(`outage[${index}].id`, 'must be a string');
+      if (!(row.re instanceof RegExp)) invalid(`outage[${index}].re`, 'must be a RegExp');
+      if (typeof row.alsoUnknown !== 'boolean') invalid(`outage[${index}].alsoUnknown`, 'must be a boolean');
+    });
+
+    const fingerprint = entry.fingerprint ?? [];
+    if (!Array.isArray(fingerprint)) invalid('fingerprint', 'must be an array');
+    fingerprint.forEach((re, index) => {
+      if (!(re instanceof RegExp)) invalid(`fingerprint[${index}]`, 'must be a RegExp');
+    });
+
+    const chrome = entry.chrome ?? { trailing: [] };
+    const trailing = chrome.trailing ?? [];
+    if (!Array.isArray(trailing)) invalid('chrome.trailing', 'must be an array');
+    trailing.forEach((re, index) => {
+      if (!(re instanceof RegExp)) invalid(`chrome.trailing[${index}]`, 'must be a RegExp');
+    });
+
+    if (entry.status?.kind !== 'statuspage') invalid('status.kind', 'must be "statuspage"');
+    if (typeof entry.status.url !== 'string') invalid('status.url', 'must be a string');
+
+    return freezeProvider({
+      id: entry.id,
+      agentIdentity: [...entry.agentIdentity],
+      kinds: { ...entry.kinds },
+      limit: { ...entry.limit },
+      outage: outage.map((row) => ({ ...row })),
+      fingerprint: [...fingerprint],
+      chrome: { ...chrome, trailing: [...trailing] },
+      status: { ...entry.status },
+    });
+  });
+  return Object.freeze(providers);
+}
+
+export const PROVIDERS = defineProviders([
   {
     id: 'claude',
     agentIdentity: ['claude'],
@@ -91,7 +154,7 @@ export const PROVIDERS = Object.freeze([
 // Registry lookups. providerFor returns null for a platform with no provider
 // (e.g. 'unknown'); platformSupports is the capability check validateEvent uses.
 const providerFor = (platform) => PROVIDERS.find((p) => p.id === platform) ?? null;
-const platformSupports = (platform, kind) => Boolean(providerFor(platform)?.kinds[kind]);
+const platformSupports = (platform, kind) => Boolean(providerFor(platform)?.kinds?.[kind]);
 
 // Derived from the registry (+ the 'unknown' sentinel); as a set this equals the
 // prior ['claude','codex','unknown'] (order is irrelevant to the .includes checks).
@@ -181,7 +244,7 @@ const isTrailingChrome = (l) => isChrome(l) || FOOTER_RE.test(l);
 // Every chrome.trailing array is empty this phase, so this ≡ isTrailingChrome for
 // all platforms (including 'unknown', which has no provider).
 const isTrailingChromeFor = (platform, l) =>
-  isTrailingChrome(l) || (providerFor(platform)?.chrome.trailing.some((re) => re.test(l)) ?? false);
+  isTrailingChrome(l) || (providerFor(platform)?.chrome?.trailing?.some((re) => re.test(l)) ?? false);
 const lastIndex = (arr, pred) => { let i = -1; arr.forEach((x, j) => { if (pred(x)) i = j; }); return i; };
 
 export function shouldLog(level, env = process.env) {

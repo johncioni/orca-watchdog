@@ -2083,3 +2083,97 @@ test('DOG-37 registry: validateEvent capability gates match the prior hardcoded 
   assert.match(validateEvent(H, LO({ platform: 'claude' })), /platform/);
   assert.match(validateEvent(H, LO({ platform: 'unknown' })), /platform/);
 });
+
+// --- DOG-38: PROVIDERS registry construction contract ---
+
+test('DOG-38 registry: every provider has the complete validated shape and a unique id', () => {
+  const ids = new Set();
+  for (const provider of watchdog.PROVIDERS) {
+    assert.equal(typeof provider.id, 'string');
+    assert.notEqual(provider.id, '');
+    assert.equal(ids.has(provider.id), false, `duplicate provider id: ${provider.id}`);
+    ids.add(provider.id);
+    assert.ok(Array.isArray(provider.agentIdentity));
+    provider.agentIdentity.forEach((identity) => assert.equal(typeof identity, 'string'));
+    for (const kind of ['limit', 'outage', 'limitOpen']) assert.equal(typeof provider.kinds[kind], 'boolean');
+    assert.ok(['generic', 'codex'].includes(provider.limit.rule));
+    assert.ok(Array.isArray(provider.outage));
+    provider.outage.forEach((row) => {
+      assert.equal(typeof row.id, 'string');
+      assert.ok(row.re instanceof RegExp);
+      assert.equal(typeof row.alsoUnknown, 'boolean');
+    });
+    assert.ok(Array.isArray(provider.fingerprint));
+    provider.fingerprint.forEach((re) => assert.ok(re instanceof RegExp));
+    assert.ok(Array.isArray(provider.chrome.trailing));
+    provider.chrome.trailing.forEach((re) => assert.ok(re instanceof RegExp));
+    assert.equal(provider.status.kind, 'statuspage');
+    assert.equal(typeof provider.status.url, 'string');
+  }
+});
+
+test('DOG-38 registry: providers and all structural nested values are frozen and immutable', () => {
+  assert.ok(Object.isFrozen(watchdog.PROVIDERS));
+  for (const provider of watchdog.PROVIDERS) {
+    for (const value of [
+      provider, provider.agentIdentity, provider.kinds, provider.limit, provider.outage,
+      ...provider.outage, provider.fingerprint, provider.chrome, provider.chrome.trailing,
+      provider.status,
+    ]) assert.ok(Object.isFrozen(value), `${provider.id} nested value must be frozen`);
+  }
+
+  const first = watchdog.PROVIDERS[0];
+  const originalLimit = first.kinds.limit;
+  const originalFingerprintLength = first.fingerprint.length;
+  assert.throws(() => { first.kinds.limit = !originalLimit; }, TypeError);
+  assert.throws(() => { first.fingerprint.push(/mutation/); }, TypeError);
+  assert.equal(first.kinds.limit, originalLimit);
+  assert.equal(first.fingerprint.length, originalFingerprintLength);
+});
+
+test('DOG-38 registry: defineProviders rejects malformed entries and duplicate ids', () => {
+  const validProvider = (overrides = {}) => ({
+    id: 'test',
+    agentIdentity: ['test'],
+    kinds: { limit: true, outage: true, limitOpen: false },
+    limit: { rule: 'generic' },
+    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false }],
+    status: { kind: 'statuspage', url: 'https://status.example.test/api/v2/status.json' },
+    ...overrides,
+  });
+
+  assert.throws(() => watchdog.defineProviders([validProvider({ kinds: undefined })]), {
+    message: 'Provider test: kinds is required',
+  });
+  assert.throws(() => watchdog.defineProviders([validProvider({ limit: { rule: 'other' } })]), {
+    message: 'Provider test: limit.rule must be "generic" or "codex"',
+  });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    outage: [{ id: 'test-error', re: 'not a regex', alsoUnknown: false }],
+  })]), { message: 'Provider test: outage[0].re must be a RegExp' });
+  assert.throws(() => watchdog.defineProviders([validProvider(), validProvider()]), {
+    message: 'Duplicate provider id: test',
+  });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    status: { kind: 'statuspage' },
+  })]), { message: 'Provider test: status.url must be a string' });
+});
+
+test('DOG-38 registry: defineProviders supplies inert defaults for optional seams', () => {
+  const [provider] = watchdog.defineProviders([{
+    id: 'test',
+    agentIdentity: ['test'],
+    kinds: { limit: true, outage: true, limitOpen: false },
+    limit: { rule: 'generic' },
+    status: { kind: 'statuspage', url: 'https://status.example.test/api/v2/status.json' },
+  }]);
+
+  assert.deepEqual(provider.outage, []);
+  assert.deepEqual(provider.fingerprint, []);
+  assert.deepEqual(provider.chrome, { trailing: [] });
+});
+
+test('DOG-38 registry: provider and derived platform order is stable', () => {
+  assert.deepEqual(watchdog.PROVIDERS.map((provider) => provider.id), ['claude', 'codex']);
+  assert.deepEqual(watchdog.PLATFORMS, ['unknown', 'claude', 'codex']);
+});
