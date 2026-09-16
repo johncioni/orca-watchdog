@@ -23,7 +23,7 @@ const GEMINI_BANNER = [
   'Usage limit reached for gemini-2.5-pro.',
   'Access resets at 3:00 PM PST.',
   '▄'.repeat(10),
-  '*   Type your message or @path/to/file',
+  ' *   Type your message or @path/to/file',
   '▀'.repeat(10),
 ];
 
@@ -1626,9 +1626,9 @@ test('isInputOccupied: Codex draft counts, the placeholder does not', () => {
 });
 
 test('isInputOccupied: Gemini draft counts only for Gemini; the placeholder does not', () => {
-  const draft = ['*   some half-typed text'];
+  const draft = [' *   half-typed draft'];
   assert.equal(isInputOccupied(draft, 'gemini'), true);
-  assert.equal(isInputOccupied(['*   Type your message or @path/to/file'], 'gemini'), false);
+  assert.equal(isInputOccupied([' *   Type your message or @path/to/file'], 'gemini'), false);
   assert.equal(isInputOccupied(draft, 'claude'), false);
   assert.equal(isInputOccupied(draft, 'codex'), false);
   assert.equal(isInputOccupied(draft, 'unknown'), false);
