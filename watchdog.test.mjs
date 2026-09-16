@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { detectBanner, parseResetTime, reconcile, eventKey, stripAnsi, sanitize, hasOutageLine, inferPlatform,
   SCHEDULE, OUTAGE_RESUME_TEXT, newEvent, validateEvent, parseStateFile } from './watchdog.mjs';
 import { isShellPrompt, isInputOccupied } from './watchdog.mjs';
-import { statusUrlFor, fetchIndicator, suppressedByStatus } from './watchdog.mjs';
+import { statusUrlFor, fetchIndicator, fetchGcpIncidents, suppressedByStatus } from './watchdog.mjs';
 import { CONNECTIVITY_URL, connectivityUrl, hasConnectivity } from './watchdog.mjs';
 import { tick, RESUME_TEXT } from './watchdog.mjs';
 
@@ -1926,27 +1926,32 @@ test('sanitize strips ANSI, collapses whitespace and truncates', () => {
 
 test('status-stub serves the scripted indicator sequence and repeats the last', async () => {
   const { startStub } = await import('./e2e/status-stub.mjs');
-  const stub = await startStub(0, ['major', 'none']);
+  const stub = await startStub(0, ['major', 'major', 'none']);
   try {
     const get = async () => (await (await fetch(`http://127.0.0.1:${stub.port}/api/v2/status.json`)).json()).status.indicator;
     assert.equal(await get(), 'major');
-    assert.equal(await get(), 'none');
+    assert.equal(await fetchIndicator(`http://127.0.0.1:${stub.port}/api/v2/status.json`, fetch), 'major');
+    assert.equal(await fetchIndicator(`http://127.0.0.1:${stub.port}/api/v2/status.json`, fetch), 'none');
     assert.equal(await get(), 'none');
   } finally { await stub.close(); }
 });
 
 test('status-stub GCP mode serves open, closed, and empty incident sequences', async () => {
   const { startGcpStub } = await import('./e2e/status-stub.mjs');
-  const stub = await startGcpStub(0, 'Vertex AI', ['open', 'closed', 'none']);
+  const product = 'Vertex AI';
+  const stub = await startGcpStub(0, product, ['open', 'open', 'closed', 'closed', 'none']);
   try {
-    const get = async () => (await (await fetch(`http://127.0.0.1:${stub.port}/incidents.json`)).json());
+    const url = `http://127.0.0.1:${stub.port}/incidents.json`;
+    const get = async () => (await (await fetch(url)).json());
     const open = await get();
     assert.equal(open.length, 1);
     assert.equal(open[0].end, null);
-    assert.equal(open[0].affected_products[0].title, 'Vertex AI');
+    assert.equal(open[0].affected_products[0].title, product);
+    assert.equal(await fetchGcpIncidents(url, product, fetch), 'impacted');
     const closed = await get();
     assert.equal(closed.length, 1);
     assert.equal(typeof closed[0].end, 'string');
+    assert.equal(await fetchGcpIncidents(url, product, fetch), 'ok');
     assert.deepEqual(await get(), []);
     assert.deepEqual(await get(), []);
   } finally { await stub.close(); }

@@ -629,7 +629,8 @@ export async function hasConnectivity(fetchImpl = globalThis.fetch, url = CONNEC
   } catch { return false; }
 }
 
-// Fetch a Statuspage indicator. Never throws: any failure is null (fail open).
+// Fetch a Statuspage indicator. Never throws: any failure is null (fail-closed;
+// the outage gate holds on null).
 export async function fetchIndicator(url, fetchImpl = globalThis.fetch) {
   try {
     const r = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(10_000) });
