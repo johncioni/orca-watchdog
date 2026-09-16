@@ -2,7 +2,7 @@
 
 All notable changes to Orca Watchdog are documented here.
 
-## Unreleased
+## 1.2.0 - 2026-09-16
 
 - **Gemini CLI support (rate limit only)**: terminals Orca identifies as
   `gemini` are watched for `Usage limit reached for <model>.` /
