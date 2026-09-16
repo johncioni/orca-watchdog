@@ -2,6 +2,30 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+- **Gemini CLI support (rate limit only)**: terminals Orca identifies as
+  `gemini` are watched for `Usage limit reached for <model>.` /
+  `Access resets at <time>.` and resumed after the stated time, recognising
+  Gemini's block-border idle box and refusing to type into its `*`-glyph input
+  when it holds a draft. No outage detection for Gemini by design. The reset
+  clock is parsed as local time; a trailing `PST`/`PDT` is ignored for now
+  (DOG-41). (DOG-40)
+- **Provider registry**: every per-agent rule (identity, event kinds, limit
+  rule, outage patterns, screen chrome, status adapter) is declared in one
+  validated, frozen `PROVIDERS` table; claude/codex behaviour is unchanged and
+  covered by parity tests. (DOG-37, DOG-38)
+- **Status adapters**: the outage gate now dispatches on a per-provider status
+  adapter — Statuspage for Claude/OpenAI, Google Cloud `incidents.json` for
+  Gemini — with the same fail-closed rule: an unverifiable feed holds the
+  resume. (DOG-39)
+- **Docs**: README gains a *Supported agents* section and documents the `e2e/`
+  fakes (`fake-tui --gemini`, `status-stub --gcp`); CLAUDE.md now describes the
+  Homebrew deploy as canonical for the live daemon (DOG-32). (DOG-42)
+- **State note**: downgrading to 1.1.x with a tracked Gemini event causes that
+  version to back up and reset the state file (unknown platform), as with the
+  earlier reset-less-alert event kind.
+
 ## 1.1.1 - 2026-09-10
 
 - **Power/scheduling citizenship**: the LaunchAgent now declares
