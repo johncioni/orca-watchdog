@@ -458,6 +458,39 @@ test('serviceIsRunning throws on a signal-killed launchctl (fail closed like ins
   } finally { h.cleanup(); }
 });
 
+test('isReaderGone: reader-gone codes are true; real errors are false (DOG-43)', async () => {
+  const { isReaderGone } = await loadManagement();
+  // EPIPE is the usual code; ENOTCONN is the macOS socketpair variant seen in the
+  // node-26 CI flake; the rest cover other reader-vanished races.
+  for (const code of ['EPIPE', 'ECONNRESET', 'ENOTCONN', 'ERR_STREAM_DESTROYED', 'ERR_SOCKET_CLOSED']) {
+    assert.equal(isReaderGone(Object.assign(new Error('x'), { code })), true, code);
+  }
+  for (const code of ['ENOSPC', 'EACCES']) {
+    assert.equal(isReaderGone(Object.assign(new Error('x'), { code })), false, code);
+  }
+  assert.equal(isReaderGone(new Error('no code')), false, 'codeless Error');
+});
+
+test('installStdoutGuard: reader-gone → exit 0 and silent; real error → exit 1 with message (DOG-43)', async () => {
+  const { installStdoutGuard } = await loadManagement();
+  const { EventEmitter } = await import('node:events');
+  const drive = (error) => {
+    const stream = new EventEmitter();
+    const exits = [], logs = [];
+    installStdoutGuard(stream, (c) => exits.push(c), (m) => logs.push(m));
+    stream.emit('error', error);
+    return { exits, logs };
+  };
+  for (const code of ['EPIPE', 'ECONNRESET', 'ENOTCONN', 'ERR_STREAM_DESTROYED', 'ERR_SOCKET_CLOSED']) {
+    const { exits, logs } = drive(Object.assign(new Error('gone'), { code }));
+    assert.deepEqual(exits, [0], `${code}: exit 0`);
+    assert.deepEqual(logs, [], `${code}: no message`);
+  }
+  const { exits, logs } = drive(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+  assert.deepEqual(exits, [1], 'ENOSPC: exit 1');
+  assert.deepEqual(logs, ['error: disk full'], 'ENOSPC: error message');
+});
+
 test('logs tolerates a reader that closes the pipe early (no EPIPE crash)', async () => {
   const h = harness('wd epipe ');
   try {
@@ -470,9 +503,12 @@ test('logs tolerates a reader that closes the pipe early (no EPIPE crash)', asyn
     const exit = new Promise((res, rej) => { child.once('error', rej); child.once('exit', (code, signal) => res({ code, signal })); });
     await new Promise((res, rej) => { child.stdout.once('data', res); child.once('error', rej); });
     child.stdout.destroy();   // mimic `| head`: reader closes the pipe early
-    const { code } = await exit;
-    assert.doesNotMatch(stderr, /EPIPE|Unhandled/, stderr);
-    assert.equal(code, 0);
+    const { code, signal } = await exit;
+    // Capture code/signal/stderr in both messages so the next flake is diagnosable
+    // straight from the CI log (the race can surface as ENOTCONN, not only EPIPE).
+    const diag = `exit code=${code} signal=${signal} stderr=${JSON.stringify(stderr)}`;
+    assert.doesNotMatch(stderr, /EPIPE|Unhandled/, diag);
+    assert.equal(code, 0, diag);
   } finally { h.cleanup(); }
 });
 
