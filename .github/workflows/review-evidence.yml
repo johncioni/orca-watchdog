@@ -3,7 +3,6 @@ name: review-evidence
 # Deterministic gate — no AI, no external service, nothing to rate-limit.
 # Every PR body must carry review evidence:
 #   Reviewed by <reviewer>, N round(s)      -> pass
-#   Review skipped: opus-implementer        -> pass (implementer was the code-reviewer model)
 #   Review skipped: <rule>                  -> pass only if the diff is skip-eligible:
 #                                              no invariant path touched (see .github/review-invariants.txt)
 #                                              and (docs/test-only OR <= MAX_SKIP_LINES changed)
@@ -66,18 +65,10 @@ jobs:
             echo "::error::PR body must contain one of:"
             echo "::error::  Reviewed by <reviewer>, N rounds"
             echo "::error::  Review skipped: <rule>   (docs/test-only or <= ${MAX_SKIP_LINES} lines, no invariant path)"
-            echo "::error::  Review skipped: opus-implementer   (implementer was the code-reviewer model)"
             exit 1
           fi
 
           echo "Skip claimed: $(grep -Ei "${prefix}review skipped:" <<<"$body" | head -1)"
-
-          # opus-implementer: the implementer was the code-reviewer model, so no
-          # code review is run (rule in ~/.agents/MODELS.md). Accepted as claimed.
-          if grep -Eiq "${prefix}review skipped:[[:space:]]*opus-implementer([^[:alnum:]_-]|$)" <<<"$body"; then
-            echo "::notice::skip accepted: opus-implementer rule"
-            exit 0
-          fi
 
           # --- PR metadata (fail closed on any API problem) ---
           pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"

@@ -72,8 +72,7 @@ Do not add dependencies.
 
 **Required checks:** `ci`, `gitleaks`, `review-evidence`.
 
-**Invariant files (ineligible for the docs/test/size skips; the MODELS.md
-opus-implementer exception still applies):** `watchdog.mjs` (the daemon
+**Invariant files (ineligible for the docs/test/size skips):** `watchdog.mjs` (the daemon
 itself: a bug here can spam `orca terminal send` into every session),
 `install.sh` / `uninstall.sh` (launchctl bootstrap/bootout), the launchd
 plist, `orca.yaml` / `scripts/orca-setup.sh` (execute on every
