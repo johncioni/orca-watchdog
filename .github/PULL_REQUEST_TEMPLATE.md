@@ -12,12 +12,12 @@
 
 <!-- Required by the review-evidence check. Fill in ONE of the two lines below
      truthfully and delete the other; the placeholders are rejected as written.
-     A skip is accepted when (a) no path in .github/review-invariants.txt is
-     touched and the diff is docs/test-only or <= 40 lines, or (b) the rule is
-     `opus-implementer` (the implementer was the code-reviewer model, so no
-     code review runs; see ~/.agents/MODELS.md).
-     Reviewer is Opus for code reviews, Codex for spec/plan reviews.
-     Rule is one of: docs-only | test-only | under-40-lines | opus-implementer -->
+     A skip is accepted only when no path in .github/review-invariants.txt is
+     touched and the diff is docs/test-only or <= 40 lines (see
+     ~/.agents/MODELS.md).
+     Reviewer is Opus for code reviews, Codex for spec/plan reviews and for
+     code reviews of fallback-implementer (Opus) output.
+     Rule is one of: docs-only | test-only | under-40-lines -->
 Reviewed by <reviewer>, N rounds
 
 Review skipped: <rule>
