@@ -39,12 +39,12 @@ test('detects Codex limit banner', () => {
   assert.ok(detectBanner(CODEX_BANNER));
 });
 
-test('detects Gemini limit banner with local reset time and real idle chrome', () => {
-  const today = new Date('2026-09-16T14:00:00');
-  const tomorrow = new Date('2026-09-16T18:00:00');
+test('detects Gemini limit banner with PST reset time and real idle chrome', () => {
+  const today = new Date('2026-09-16T12:00:00Z');
+  const tomorrow = new Date('2026-09-17T02:00:00Z');
   for (const [now, expected] of [
-    [today, new Date('2026-09-16T15:00:00')],
-    [tomorrow, new Date('2026-09-17T15:00:00')],
+    [today, new Date('2026-09-16T23:00:00Z')],
+    [tomorrow, new Date('2026-09-17T23:00:00Z')],
   ]) {
     const banner = detectBanner(GEMINI_BANNER, 'gemini', now);
     assert.equal(banner?.kind, 'limit');
@@ -345,6 +345,57 @@ test('inferPlatform maps Gemini agent identity to gemini', () => {
 // --- parseResetTime ---
 
 const NOW = new Date('2026-07-23T23:00:00'); // 11pm local
+
+test('zone-suffixed reset clocks resolve to fixed-offset instants and roll in that zone (DOG-41)', () => {
+  for (const [text, now, expected] of [
+    ['3:00 PM PST.', '2026-09-16T12:00:00Z', '2026-09-16T23:00:00.000Z'],
+    ['3:00 PM PDT', '2026-09-16T12:00:00Z', '2026-09-16T22:00:00.000Z'],
+    ['14:00 UTC', '2026-09-16T12:00:00Z', '2026-09-16T14:00:00.000Z'],
+    ['9am EDT', '2026-09-16T12:00:00Z', '2026-09-16T13:00:00.000Z'],
+    ['3:00 p.m. PST', '2026-09-16T12:00:00Z', '2026-09-16T23:00:00.000Z'],
+    ['3:00 PM PST', '2026-09-17T02:00:00Z', '2026-09-17T23:00:00.000Z'],
+    ['11:30 PM PST', '2026-09-16T07:00:00Z', '2026-09-16T07:30:00.000Z'],
+    ['3pm gmt', '2026-09-16T12:00:00Z', '2026-09-16T15:00:00.000Z'],
+    ['14:00 Z', '2026-09-16T12:00:00Z', '2026-09-16T14:00:00.000Z'],
+    ['3pm MST', '2026-09-16T12:00:00Z', '2026-09-16T22:00:00.000Z'],
+    ['3pm MDT', '2026-09-16T12:00:00Z', '2026-09-16T21:00:00.000Z'],
+    ['3pm CST', '2026-09-16T12:00:00Z', '2026-09-16T21:00:00.000Z'],
+    ['3pm CDT', '2026-09-16T12:00:00Z', '2026-09-16T20:00:00.000Z'],
+    ['3pm EST', '2026-09-16T12:00:00Z', '2026-09-16T20:00:00.000Z'],
+  ]) {
+    assert.equal(parseResetTime(text, new Date(now)).toISOString(), expected, text);
+  }
+});
+
+test('zone-suffixed reset clocks are independent of the machine TZ (DOG-41)', () => {
+  const wdUrl = new URL('./watchdog.mjs', import.meta.url).href;
+  const script = `
+    const { parseResetTime } = await import(${JSON.stringify(wdUrl)});
+    const now = new Date('2026-09-16T07:00:00Z');
+    process.stdout.write(parseResetTime('11:30 PM PST', now).toISOString());
+  `;
+  for (const tz of ['America/Los_Angeles', 'Asia/Tokyo']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script],
+      { env: { ...process.env, TZ: tz }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '2026-09-16T07:30:00.000Z', tz);
+  }
+});
+
+test('unknown or nonadjacent zone abbreviations leave the local clock unchanged (DOG-41)', () => {
+  const now = new Date('2026-09-16T12:00:00Z');
+  const local = parseResetTime('3:00 PM', now).toISOString();
+  assert.equal(parseResetTime('3:00 PM CEST', now).toISOString(), local);
+  assert.equal(parseResetTime('3:00 PM AKDT', now).toISOString(), local);
+  assert.equal(parseResetTime('PST users: resets at 3:00 PM', now).toISOString(), local);
+});
+
+test('month-day reset clocks honour adjacent fixed-offset abbreviations (DOG-41)', () => {
+  const now = new Date('2026-09-07T10:00:00Z');
+  assert.equal(parseResetTime('resets Sep 12 at 3pm PST', now).toISOString(), '2026-09-12T23:00:00.000Z');
+  assert.equal(parseResetTime('resets Jan 3 at 3pm PST', now).toISOString(), '2027-01-03T23:00:00.000Z');
+  assert.equal(parseResetTime('resets Sep 12, 2026 3pm PDT', now).toISOString(), '2026-09-12T22:00:00.000Z');
+});
 
 test('parses 12h times, rolling forward past midnight', () => {
   const t = parseResetTime('resets at 3am', NOW);
