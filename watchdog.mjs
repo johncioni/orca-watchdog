@@ -463,15 +463,38 @@ export function validateParsedState(s) {
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const MONTH_DAY_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4}))?/i;
+const CLOCK_ZONE_OFFSETS = Object.freeze({ PST: -480, PDT: -420, MST: -420, MDT: -360,
+  CST: -360, CDT: -300, EST: -300, EDT: -240, UTC: 0, GMT: 0, Z: 0 });
+
+function clockZoneOffset(text, end) {
+  if (text[end] === '.') end++;
+  const zone = text.slice(end).match(/^\s*(PST|PDT|MST|MDT|CST|CDT|EST|EDT|UTC|GMT|Z)\b\.?/i);
+  return zone ? CLOCK_ZONE_OFFSETS[zone[1].toUpperCase()] : undefined;
+}
 
 // Reads a clock time ("3pm", "3:30 p.m.", "14:00") out of text. Returns
-// { h, m } or null.
+// { h, m, offsetMin? } or null.
 function parseClock(text) {
   const t12 = text.match(/\b(\d{1,2})(?::([0-5]\d))?\s*([ap])\.?m\.?\b/i);
-  if (t12) return { h: Number(t12[1]) % 12 + (t12[3].toLowerCase() === 'p' ? 12 : 0), m: Number(t12[2] || 0) };
+  if (t12) return { h: Number(t12[1]) % 12 + (t12[3].toLowerCase() === 'p' ? 12 : 0), m: Number(t12[2] || 0),
+    offsetMin: clockZoneOffset(text, t12.index + t12[0].length) };
   const t24 = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
-  if (t24) return { h: Number(t24[1]), m: Number(t24[2]) };
+  if (t24) return { h: Number(t24[1]), m: Number(t24[2]),
+    offsetMin: clockZoneOffset(text, t24.index + t24[0].length) };
   return null;
+}
+
+function zonedClockToDate(h, m, offsetMin, now, monthDay = null) {
+  const zonedNow = new Date(now.getTime() + offsetMin * MIN);
+  const year = monthDay?.year ?? zonedNow.getUTCFullYear();
+  const month = monthDay?.month ?? zonedNow.getUTCMonth();
+  const day = monthDay?.day ?? zonedNow.getUTCDate();
+  const candidate = new Date(Date.UTC(year, month, day, h, m) - offsetMin * MIN);
+  if (candidate <= now && now - candidate > GRACE_PAST_MS && !monthDay?.year) {
+    if (monthDay) candidate.setUTCFullYear(candidate.getUTCFullYear() + 1);
+    else candidate.setUTCDate(candidate.getUTCDate() + 1);
+  }
+  return candidate;
 }
 
 // An unbounded digit run in a relative reset can overflow the Date range and
@@ -500,6 +523,8 @@ export function parseResetTime(text, now) {
   const md = text.match(MONTH_DAY_RE);
   if (md) {
     const month = MONTHS.indexOf(md[1].slice(0, 3).toLowerCase());
+    if (clock?.offsetMin !== undefined) return zonedClockToDate(clock.h, clock.m, clock.offsetMin, now,
+      { month, day: Number(md[2]), year: md[3] ? Number(md[3]) : undefined });
     const candidate = new Date(now);
     if (md[3]) candidate.setFullYear(Number(md[3]), month, Number(md[2]));
     else candidate.setMonth(month, Number(md[2]));
@@ -509,6 +534,7 @@ export function parseResetTime(text, now) {
   }
 
   if (!clock) return null;
+  if (clock.offsetMin !== undefined) return zonedClockToDate(clock.h, clock.m, clock.offsetMin, now);
   const candidate = new Date(now);
   candidate.setHours(clock.h, clock.m, 0, 0);
   if (candidate <= now && now - candidate > GRACE_PAST_MS) {
