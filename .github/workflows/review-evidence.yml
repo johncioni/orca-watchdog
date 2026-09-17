@@ -6,7 +6,9 @@ name: review-evidence
 #   Review skipped: <rule>                  -> pass only if the diff is skip-eligible:
 #                                              no invariant path touched (see .github/review-invariants.txt)
 #                                              and (docs/test-only OR <= MAX_SKIP_LINES changed)
-# Renovate/Dependabot PRs are exempt. Fails CLOSED on any API error.
+# Renovate/Dependabot PRs are exempt only while they touch no invariant path;
+# a bot PR that touches one needs a human to run a review round and add the
+# 'Reviewed by' line to its body. Fails CLOSED on any API error.
 #
 # Uses pull_request_target on purpose: the job never checks out or executes PR
 # code (API reads only), and the base-branch copy of this workflow + the
@@ -43,10 +45,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          bot=false
           case "$PR_AUTHOR" in
-            'renovate[bot]'|'dependabot[bot]')
-              echo "::notice::dependency bot '$PR_AUTHOR' — exempt from review evidence"
-              exit 0 ;;
+            'renovate[bot]'|'dependabot[bot]') bot=true ;;
           esac
 
           # Normalise: drop CR, strip HTML comments and fenced code blocks so
@@ -60,23 +61,26 @@ jobs:
             exit 0
           fi
 
-          if ! grep -Eiq "${prefix}review skipped:[[:space:]]*[^[:space:]]" <<<"$body" \
-             || grep -Eiq "${prefix}review skipped:[[:space:]]*<rule>" <<<"$body"; then
-            echo "::error::PR body must contain one of:"
-            echo "::error::  Reviewed by <reviewer>, N rounds"
-            echo "::error::  Review skipped: <rule>   (docs/test-only or <= ${MAX_SKIP_LINES} lines, no invariant path)"
-            exit 1
+          # Dependency-bot PRs carry no evidence line; they are judged on paths alone below.
+          if ! $bot; then
+            if ! grep -Eiq "${prefix}review skipped:[[:space:]]*[^[:space:]]" <<<"$body" \
+               || grep -Eiq "${prefix}review skipped:[[:space:]]*<rule>" <<<"$body"; then
+              echo "::error::PR body must contain one of:"
+              echo "::error::  Reviewed by <reviewer>, N rounds"
+              echo "::error::  Review skipped: <rule>   (docs/test-only or <= ${MAX_SKIP_LINES} lines, no invariant path)"
+              exit 1
+            fi
+
+            echo "Skip claimed: $(grep -Ei "${prefix}review skipped:" <<<"$body" | head -1)"
+
+            # Only the three named rules exist; any other word (including the retired
+            # opus-implementer) fails closed rather than being treated as a size skip.
+            rule="$(grep -Eio "${prefix}review skipped:[[:space:]]*[a-z0-9-]+" <<<"$body" | head -1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^.*skipped:[[:space:]]*//')"
+            case "$rule" in
+              docs-only|test-only|under-40-lines) ;;
+              *) echo "::error::unknown skip rule '${rule}': must be docs-only, test-only or under-40-lines"; exit 1 ;;
+            esac
           fi
-
-          echo "Skip claimed: $(grep -Ei "${prefix}review skipped:" <<<"$body" | head -1)"
-
-          # Only the three named rules exist; any other word (including the retired
-          # opus-implementer) fails closed rather than being treated as a size skip.
-          rule="$(grep -Eio "${prefix}review skipped:[[:space:]]*[a-z0-9-]+" <<<"$body" | head -1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^.*skipped:[[:space:]]*//')"
-          case "$rule" in
-            docs-only|test-only|under-40-lines) ;;
-            *) echo "::error::unknown skip rule '${rule}': must be docs-only, test-only or under-40-lines"; exit 1 ;;
-          esac
 
           # --- PR metadata (fail closed on any API problem) ---
           pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -124,9 +128,17 @@ jobs:
             done
           done
           if ((${#hits[@]})); then
-            echo "::error::Review skipped, but the diff touches invariant paths that always require a review round:"
+            if $bot; then
+              echo "::error::dependency bot '$PR_AUTHOR' touches invariant paths, which always require a review round; review it and add 'Reviewed by <reviewer>, N rounds' to the PR body:"
+            else
+              echo "::error::Review skipped, but the diff touches invariant paths that always require a review round:"
+            fi
             printf '::error::  %s\n' "${hits[@]}"
             exit 1
+          fi
+          if $bot; then
+            echo "::notice::dependency bot '$PR_AUTHOR' — no invariant path touched, exempt from review evidence"
+            exit 0
           fi
 
           # --- 2. Docs/test-only diffs may skip at any size; everything else must be small ---
