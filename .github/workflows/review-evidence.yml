@@ -70,6 +70,14 @@ jobs:
 
           echo "Skip claimed: $(grep -Ei "${prefix}review skipped:" <<<"$body" | head -1)"
 
+          # Only the three named rules exist; any other word (including the retired
+          # opus-implementer) fails closed rather than being treated as a size skip.
+          rule="$(grep -Eio "${prefix}review skipped:[[:space:]]*[^[:space:]]+" <<<"$body" | head -1 | sed -E 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')"
+          case "$rule" in
+            docs-only|test-only|under-40-lines) ;;
+            *) echo "::error::unknown skip rule '${rule}': must be docs-only, test-only or under-40-lines"; exit 1 ;;
+          esac
+
           # --- PR metadata (fail closed on any API problem) ---
           pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           additions="$(jq -r '.additions' <<<"$pr_json")"
