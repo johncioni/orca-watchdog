@@ -232,7 +232,11 @@ flowchart TD
 The details behind the diagram:
 
 - **Rate limit.** Parses the stated reset time; once it has passed and the
-  terminal is still idle on the banner, sends one resume prompt. Normally one send
+  terminal is still idle on the banner, sends one resume prompt. Relative
+  forms (`in 2h 30m`, `in 3 days`) count from detection. A clock time is read
+  as the machine's local time unless a zone abbreviation follows it (`PST`,
+  `PDT`, `MST`, `MDT`, `CST`, `CDT`, `EST`, `EDT`, `UTC`, `GMT`, `Z`), which is
+  taken at its fixed offset with no daylight-saving inference. Normally one send
   per event, with up to two retries 30 minutes apart before it gives up loudly in
   the log. If the banner is still on screen but its reset time moves materially
   later, the watchdog honours the new time and keeps waiting.
@@ -290,7 +294,7 @@ identity.
 |---|---|---|---|---|
 | Claude Code | yes | yes | `status.claude.com` (Statuspage) | Reference behaviour. |
 | Codex | yes (+ reset-less alert) | yes (`■` error line) | `status.openai.com` (Statuspage) | Held while `Reconnecting… N/5` is on screen. |
-| Gemini CLI | yes | no | Google Cloud `incidents.json`, product *Vertex Gemini API* | `Usage limit reached for <model>.` / `Access resets at <time>.` The reset clock is parsed as **local time**; a trailing `PST`/`PDT` is ignored for now. Gemini's high-demand fallback line is transient and self-heals, so no outage rule. |
+| Gemini CLI | yes | no | Google Cloud `incidents.json`, product *Vertex Gemini API* | `Usage limit reached for <model>.` / `Access resets at <time>.` A zone abbreviation after the clock (`3:00 PM PST`) is honoured at its fixed offset; a bare clock is read as local time. Gemini's high-demand fallback line is transient and self-heals, so no outage rule. |
 
 A registry entry carries: the Orca identities that map to it; which event kinds
 it may raise (`limit`, `outage`, reset-less `limitOpen`); its limit rule
