@@ -460,8 +460,8 @@ test('serviceIsRunning throws on a signal-killed launchctl (fail closed like ins
 
 test('isReaderGone: reader-gone codes are true; real errors are false (DOG-43)', async () => {
   const { isReaderGone } = await loadManagement();
-  // EPIPE is the usual code; ENOTCONN is the macOS socketpair variant seen in the
-  // node-26 CI flake; the rest cover other reader-vanished races.
+  // EPIPE is the usual code; ENOTCONN is the macOS socketpair variant observed in a
+  // local Node-26/macOS reproduction of DOG-43; the rest cover other reader-vanished races.
   for (const code of ['EPIPE', 'ECONNRESET', 'ENOTCONN', 'ERR_STREAM_DESTROYED', 'ERR_SOCKET_CLOSED']) {
     assert.equal(isReaderGone(Object.assign(new Error('x'), { code })), true, code);
   }
