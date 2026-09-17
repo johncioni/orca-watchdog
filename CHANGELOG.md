@@ -2,6 +2,14 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.1 - 2026-09-16
+
+- **Zone-aware reset times**: a zone abbreviation immediately after a reset
+  clock (`Access resets at 3:00 PM PST.`) is now honoured at its fixed offset
+  (PST, PDT, MST, MDT, CST, CDT, EST, EDT, UTC, GMT, Z), so Gemini resumes at
+  the stated Pacific instant on any machine. Bare clock times still read as
+  local time; nothing changes for Claude or Codex banners. (DOG-41)
+
 ## 1.2.0 - 2026-09-16
 
 - **Gemini CLI support (rate limit only)**: terminals Orca identifies as
