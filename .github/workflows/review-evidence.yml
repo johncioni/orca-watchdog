@@ -72,7 +72,7 @@ jobs:
 
           # Only the three named rules exist; any other word (including the retired
           # opus-implementer) fails closed rather than being treated as a size skip.
-          rule="$(grep -Eio "${prefix}review skipped:[[:space:]]*[^[:space:]]+" <<<"$body" | head -1 | sed -E 's/.*:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')"
+          rule="$(grep -Eio "${prefix}review skipped:[[:space:]]*[a-z0-9-]+" <<<"$body" | head -1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^.*skipped:[[:space:]]*//')"
           case "$rule" in
             docs-only|test-only|under-40-lines) ;;
             *) echo "::error::unknown skip rule '${rule}': must be docs-only, test-only or under-40-lines"; exit 1 ;;
