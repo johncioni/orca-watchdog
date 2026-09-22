@@ -9,8 +9,8 @@
 class OrcaWatchdog < Formula
   desc "Watchdog that auto-resumes rate-limited or stalled Orca terminals"
   homepage "https://github.com/johncioni/orca-watchdog"
-  url "https://github.com/johncioni/orca-watchdog/releases/download/v1.2.2/orca-watchdog-1.2.2.tar.gz"
-  sha256 "e5108112718a0bfd156e9b1453783934a8d053fd9a8780ea2572bc4f55c0d3a0"
+  url "https://github.com/johncioni/orca-watchdog/releases/download/v1.2.3/orca-watchdog-1.2.3.tar.gz"
+  sha256 "094af118d0a1c06fdf47afbe59aab1aa78a2fd5534f1ecd35ca8ca3ab948a4a1"
   license "MIT"
 
   depends_on :macos
