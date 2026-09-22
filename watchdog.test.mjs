@@ -127,7 +127,7 @@ test('a pathological long-digit line is handled fast and is not a false limit (D
   assert.ok(detectBanner(['usage limit reached. resets at 3pm', '> '], 'claude'));
 });
 
-test('only scans the last 15 lines', () => {
+test('only scans the last 18 lines', () => {
   const lines = [...CLAUDE_BANNER, ...Array(20).fill('normal output')];
   assert.equal(detectBanner(lines), null);
 });
@@ -136,6 +136,117 @@ test('only scans the last 15 lines', () => {
 
 const CHROME_TAIL = ['', '─'.repeat(40), '> ', '? for shortcuts'];
 const CLAUDE_529 = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"},"request_id":"req_011CTx"}';
+const CLAUDE_MARKER_500 = '⏺ API Error: 500 Internal server error. This is ...';
+const CLAUDE_MARKER_529 = '⏺ API Error: 529 Overloaded. This is a ...';
+const CLAUDE_CONTINUATIONS = ['  temporary issue with the provider.', '  Please try again shortly.'];
+// Verbatim physical lines from .superpowers/captures/dog48-term_*.json.
+const CLAUDE_500_CAPTURE = [
+  '⏺ API Error: 500 Internal server error. This is',
+  '  a server-side issue, usually temporary — try',
+  '  again in a moment. If it persists, check',
+  '  https://status.claude.com.',
+  '✻ Worked for 1m 42s · done 8:57 PM',
+  '❯ try to resume where you left off',
+  '⏺ Using the writing-plans skill to create the',
+  '  implementation plan. First, reading the code the plan',
+  '  has to quote so every task carries real, runnable',
+  '  edits.',
+  '  Checking test discovery in the gate, the test price',
+  '  table, weekday tables for the calendar cases, and the',
+  '  pre-upgrade render test',
+  '  ⎿  $ grep -n "node --test\\|node --check\\|for f',
+  '     in\\|\\.mjs" scripts/orca-setup.sh | head; cat',
+  '     test/fixtures/prices-test.json; python3 -c "',
+  '     import datetime as dt',
+  "     W=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']",
+  '     for y,m,d in',
+  '     [(2026,3,3),(2027,1,2),(2026,3,10),(2026,11,3)]:',
+  '     t=dt.date(y,m,d); print([( (t-dt.ti…',
+  '✢ Flibbertigibbeting… (4m 43s · ↓ 20.0k tokens)',
+  '  ⎿  Tip: Run /install-github-app to tag @claude right',
+  '     from your Github issues and PRs',
+  '─'.repeat(55),
+  '❯',
+  '─'.repeat(55),
+  '  [Fable 5.1 ◔ medium]',
+  '  orca-ops git:(johncioni/ops-8-daily-trend-docs)',
+  '  swift-wondering-storm │ ⏱️   23h 3m │ Cost $100.95',
+  '  Context █░░░ 24%',
+  '  Usage   ███░ 78% (resets in 3h 20m)',
+  '  2 CLAUDE.md | 15 hooks',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
+];
+const CLAUDE_529_CAPTURE = [
+  '⏺ Rewriting the plan now, section by section. Reading',
+  '  the header, constraints, deviations, and file map',
+  '  first.',
+  '  Read 2 files',
+  '⏺ API Error: 529 Overloaded. This is a',
+  '  server-side issue, usually temporary — try',
+  '  again in a moment. If it persists, check',
+  '  https://status.claude.com.',
+  '✻ Cooked for 21m 11s · done 8:56 PM',
+  '❯ try to resume were you left off',
+  '  Searching for 1 pattern, running 6 shell commands…',
+  '  ⎿  $ grep -n "hello\\b" -A 30',
+  '     convex/lib/studioDefaultTemplates.ts | grep -n',
+  '     "blank\\|tokenId\\|key:\\|stageAdvance\\|sendPolicy" |',
+  '     head -20; echo ---E2ETEMPL; grep -n',
+  '     "E2E_TEMPLATE_KEY_PREFIX\\|function',
+  '     upsertE2ETemplate\\|function',
+  '     e2eActiveBodyDoc\\|function paragraphTextDoc"',
+  '     convex/intake.ts | head; echo -…',
+  '· Crunching… (deep in thought with high effort)',
+  '  ⎿  Tip: Running multiple Claude sessions? Use /color',
+  '     and /rename to tell them apart at a glance.',
+  '─'.repeat(55),
+  '❯',
+  '─'.repeat(55),
+  '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e)',
+  '  floating-wondering-crescent │ ⏱️   1h 33m',
+  '  Cost $40.78',
+  '  Context █░░░ 22%',
+  '  Usage   ███░ 80% (resets in 3h 20m)',
+  '  2 CLAUDE.md | 15 hooks',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
+  '  ⧉  plan-2e-automation-engine',
+];
+// Verbatim footer shapes from the round-1 evidence captures. The first wide
+// Opus line is active agent output, so only the box beginning at its rule is
+// part of the positive footer fixture.
+const CLAUDE_WIDE_OPUS_CAPTURE = [
+  '✳ Scurrying… (40s · ↓ 1.6k tokens · thinking with xhigh effort)',
+  '─'.repeat(128),
+  '❯',
+  '─'.repeat(128),
+  '  [Opus 4.8 (1M context) ◕ xhigh] │ dog48-history-marker git:(johncioni/dog48-history-marker) │ ⏱️   <1m │ Cost $0.859',
+  '  Context █░░░░░░░░░ 7% │ Usage ██░░░░░░░░ 23% (resets in 4h 32m)',
+  '  2 CLAUDE.md | 1 MCPs | 15 hooks',
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
+];
+const CLAUDE_DOG50_WIDE_BOX = [
+  '─'.repeat(128),
+  '❯',
+  '─'.repeat(128),
+  '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e* [+37 -29]) │ floating-wondering-crescent │ ⏱️   4h 52m │ Cost $59.80',
+  '  Context ██░░░░░░░░ 23% │ Usage Weekly ████░░░░░░ 39% (resets in 5d 1h)',
+  '  2 CLAUDE.md | 1 MCPs | 15 hooks',
+  '  ~2026-09-21-plan-2e-automation-engine.md(+37 -29)',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent',
+  '  ⧉  plan-2e-automation-engine',
+];
+const CLAUDE_DOG50_NARROW_BOX = [
+  '─'.repeat(55),
+  '❯',
+  '─'.repeat(55),
+  '  [Fable 5.1 ◔ medium] │ orca-limit-watchdog git:(ma…',
+  '  Context █░░░░░░░░░ 14% │ Usage Weekly ████░░░░░░ 3…',
+  '  2 CLAUDE.md | 1 MCPs | 15 hooks',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
+];
+const CLAUDE_ERROR_BLOCK = CLAUDE_500_CAPTURE.slice(0, 5);
+const CLAUDE_NARROW_FABLE_BOX = CLAUDE_500_CAPTURE.slice(24);
+const CLAUDE_500_STALLED = [...CLAUDE_ERROR_BLOCK, ...CLAUDE_NARROW_FABLE_BOX];
 const CODEX_ERR = "■ We're currently experiencing high demand, which may cause temporary errors.";
 const CODEX_FOOTER = 'Context 16% used · 5h 36% left · weekly 90% left · gpt-5.6-sol medium · main · Ready · Custom permissions';
 const CODEX_TAIL = ['─ Worked for 2m 51s ───────────', CODEX_ERR, '', '› Ask Codex to do anything', CODEX_FOOTER];
@@ -146,16 +257,120 @@ test('existing limit banners now carry kind "limit"', () => {
   assert.equal(detectBanner(CODEX_BANNER).kind, 'limit');
 });
 
-test('detects Claude API outage banners (529, 503, Connection error, ⎿ prefix) on claude and unknown', () => {
+test('detects Claude API outage banners (529, 503, Connection error, ⎿/⏺ prefixes) on claude and unknown', () => {
   for (const platform of ['claude', 'unknown']) {
-    for (const line of [CLAUDE_529, '⎿  ' + CLAUDE_529, 'API Error: 503 Service Unavailable', 'API Error: Connection error']) {
+    for (const line of [CLAUDE_529, '⎿  ' + CLAUDE_529, '⏺ ' + CLAUDE_529,
+      'API Error: 503 Service Unavailable', 'API Error: Connection error']) {
       const b = detectBanner(outageTail(line), platform);
       assert.ok(b, `${platform}: ${line}`);
       assert.equal(b.kind, 'outage');
       assert.equal(b.patternId, 'claude-api-error');
-      assert.match(b.bannerText, /^(?:⎿\s*)?API Error/);
+      assert.match(b.bannerText, /^(?:[⎿⏺]\s*)?API Error/);
     }
   }
+});
+
+test('detects observed ⏺ 500/529 outages with bounded wrapped continuations for Claude identities (DOG-48)', () => {
+  const fixtures = [
+    CLAUDE_MARKER_500,
+    CLAUDE_MARKER_529,
+    '\x1b[36m⏺\x1b[0m \x1b[31mAPI Error: 500 Internal server error. This is ...\x1b[0m',
+    '\x1b[36m⏺\x1b[0m \x1b[31mAPI Error: 529 Overloaded. This is a ...\x1b[0m',
+  ];
+  for (const agentIdentity of ['claude', 'claude-agent-teams']) {
+    for (const line of fixtures) {
+      const terminal = { agentIdentity };
+      const initialPlatform = inferPlatform(terminal);
+      assert.equal(initialPlatform, agentIdentity === 'claude' ? 'claude' : 'unknown');
+      const banner = detectBanner([line, ...CLAUDE_CONTINUATIONS, '', '> ', FOOTER, '? for shortcuts'], initialPlatform);
+      assert.ok(banner, `${agentIdentity}: ${line}`);
+      assert.equal(banner.kind, 'outage');
+      assert.equal(banner.patternId, 'claude-api-error');
+      assert.equal(inferPlatform(terminal, banner), 'claude');
+    }
+  }
+});
+
+test('detects the verbatim captured stalled Claude tail with three lines of window margin (DOG-48)', () => {
+  assert.equal(CLAUDE_500_STALLED.length, 15);
+  for (const agentIdentity of ['claude', 'claude-agent-teams']) {
+    const terminal = { agentIdentity };
+    const initialPlatform = inferPlatform(terminal);
+    const banner = detectBanner([...CLAUDE_500_STALLED, '', '', ''], initialPlatform);
+    assert.ok(banner, agentIdentity);
+    assert.equal(banner.kind, 'outage');
+    assert.equal(banner.patternId, 'claude-api-error');
+    assert.equal(inferPlatform(terminal, banner), 'claude');
+  }
+});
+
+test('detects captured Claude footer shapes structurally across widths and models (DOG-48 review F1)', () => {
+  const boxes = [
+    ['narrow Fable', CLAUDE_NARROW_FABLE_BOX],
+    ['wide Opus', CLAUDE_WIDE_OPUS_CAPTURE.slice(1)],
+    ['DOG-50 wide', CLAUDE_DOG50_WIDE_BOX],
+    ['DOG-50 narrow', CLAUDE_DOG50_NARROW_BOX],
+  ];
+  for (const platform of ['claude', 'unknown']) {
+    for (const [name, box] of boxes) {
+      const banner = detectBanner([...CLAUDE_ERROR_BLOCK, ...box], platform);
+      assert.ok(banner, `${platform}: ${name}`);
+      assert.equal(banner.kind, 'outage');
+      assert.equal(banner.patternId, 'claude-api-error');
+    }
+  }
+});
+
+test('Claude structural footer requires a closed box and cannot hide output above it (DOG-48 review F1)', () => {
+  const wideBox = CLAUDE_WIDE_OPUS_CAPTURE.slice(1);
+  assert.equal(detectBanner([...CLAUDE_ERROR_BLOCK,
+    '⏺ I resumed and completed another task.', ...wideBox], 'claude'), null);
+  assert.equal(detectBanner([...CLAUDE_ERROR_BLOCK,
+    wideBox[0], wideBox[1], ...wideBox.slice(3)], 'claude'), null);
+});
+
+test('Claude footer reset text is excluded from generic limit evidence (DOG-48 review F2)', () => {
+  const now = new Date('2026-09-22T05:00:00');
+  const bannerLine = 'Claude usage limit reached. Your limit will reset at 3pm.';
+  const banner = detectBanner([bannerLine, '✻ Worked for 1m 42s · done 8:57 PM',
+    ...CLAUDE_NARROW_FABLE_BOX], 'claude', now);
+  assert.ok(banner);
+  assert.equal(banner.matchedLine, bannerLine);
+  assert.equal(banner.bannerText, bannerLine);
+  const event = newEvent({ handle: 'term_limit_footer', platform: 'claude', banner }, now);
+  assert.equal(event.resetAt, new Date(2026, 8, 22, 15, 0).toISOString());
+});
+
+test('DOG-50 session-limit wording remains the matched line above Claude footer chrome (DOG-48 review F2)', () => {
+  const bannerLine = "You've hit your session limit · resets 12:30am (America/New_York)";
+  const banner = detectBanner([bannerLine, '✻ Baked for 17m 13s · done 9:54 PM',
+    ...CLAUDE_DOG50_WIDE_BOX], 'claude', new Date('2026-09-22T21:54:00'));
+  assert.ok(banner);
+  assert.equal(banner.matchedLine, bannerLine);
+  assert.equal(banner.bannerText, bannerLine);
+});
+
+test('the full verbatim resumed captures are a TAIL_LINES truncation guard (DOG-48 review F3)', () => {
+  assert.equal(detectBanner(CLAUDE_500_CAPTURE, 'claude'), null);
+  assert.equal(detectBanner(CLAUDE_529_CAPTURE, 'claude'), null);
+});
+
+test('verbatim resumed output is stale while the API error remains inside TAIL_LINES (DOG-48 review F3)', () => {
+  const resumedInWindow = [...CLAUDE_500_CAPTURE.slice(0, 8), ...CLAUDE_500_CAPTURE.slice(24)];
+  assert.equal(resumedInWindow.length, 18);
+  assert.match(resumedInWindow[0], /^⏺ API Error:/);
+  assert.equal(detectBanner(resumedInWindow, 'claude'), null);
+});
+
+test('Claude outage continuations are immediate, indented, bounded, and end at chrome (DOG-48)', () => {
+  assert.equal(detectBanner([CLAUDE_MARKER_529, 'not an indented wrap', '', '> ', FOOTER], 'claude'), null);
+  assert.ok(detectBanner([CLAUDE_MARKER_529, ...CLAUDE_CONTINUATIONS,
+    '  third wrapped line', '  fourth wrapped line', '', '> '], 'claude'));
+  assert.equal(detectBanner([CLAUDE_MARKER_529, ...CLAUDE_CONTINUATIONS,
+    '  third wrapped line', '  fourth wrapped line', '  fifth wrapped line', '', '> '], 'claude'), null);
+  assert.equal(detectBanner([CLAUDE_MARKER_529, CLAUDE_CONTINUATIONS[0], '', '  continuation after chrome', '> '], 'claude'), null);
+  assert.equal(detectBanner([CLAUDE_MARKER_529, CLAUDE_CONTINUATIONS[0],
+    '⏺ I resumed the task.', '  indented real reply', '', '❯'], 'claude'), null);
 });
 
 test('detects Codex outage errors only on a codex-identified terminal (DOG-17)', () => {
@@ -197,6 +412,7 @@ test('outage bannerText is sanitized and capped at 200 chars', () => {
 test('non-outage API errors do not match', () => {
   for (const code of [400, 401, 403, 429]) {
     assert.equal(detectBanner(outageTail(`API Error: ${code} {"type":"error"}`), 'claude'), null, String(code));
+    assert.equal(detectBanner(outageTail(`⏺ API Error: ${code} {"type":"error"}`), 'claude'), null, `⏺ ${code}`);
   }
 });
 
@@ -224,6 +440,9 @@ test('prose, code and logs mentioning errors do not match', () => {
     '> ',
   ];
   assert.equal(detectBanner(lines, 'claude'), null);
+  assert.equal(detectBanner(['I saw "⏺ API Error: 529 Overloaded" in quoted prose.', '> '], 'claude'), null);
+  assert.equal(detectBanner(['2026-09-21T12:00:00Z ⏺ API Error: 500 Internal server error.', '> '], 'claude'), null);
+  assert.equal(detectBanner(['[info] ⏺ API Error: 529 Overloaded.', '> '], 'claude'), null);
 });
 
 test('ordinary agent output ending at the input box does not match', () => {
@@ -233,11 +452,14 @@ test('ordinary agent output ending at the input box does not match', () => {
 test('a stale error the agent worked past fails the final-block requirement', () => {
   assert.equal(detectBanner([CLAUDE_529, 'Retrying succeeded, continuing with the task.', 'Edited foo.js', '> '], 'claude'), null);
   assert.equal(detectBanner([CLAUDE_529, 'john@mac ~ %'], 'claude'), null);
+  assert.equal(detectBanner([CLAUDE_MARKER_529, CLAUDE_CONTINUATIONS[0], '⏺ The request recovered, so I continued working.', '> '], 'claude'), null);
 });
 
 test('retry markers at or after the error veto; before the error do not', () => {
   assert.equal(detectBanner([CLAUDE_529, 'Retrying in 5s… (attempt 2/10)', '> '], 'claude'), null);
   assert.equal(detectBanner(['API Error: 529 overloaded_error · Retrying in 4s', '> '], 'claude'), null);
+  assert.equal(detectBanner([CLAUDE_MARKER_529, CLAUDE_CONTINUATIONS[0],
+    'Retrying in 3s…', 'attempt 2/5', 'esc to interrupt', '> '], 'claude'), null);
   assert.ok(detectBanner(['Retrying in 5s…', CLAUDE_529, '> '], 'claude'));
   assert.ok(detectBanner([CLAUDE_529, 'Retrying in 5s…', CLAUDE_529, '> '], 'claude'));
 });
@@ -937,14 +1159,17 @@ test('reconcile: consent schedule caps six sends, deadline counts from consent (
   }
 });
 
-test('isShellPrompt recognises shell prompt endings and fails closed on a bare ">"', () => {
-  for (const p of ['john@mac ~ $', '~ %', 'root#', '❯', 'repo ➜', 'λ', '❱', 'foo>', 'cmd>  ']) {
+test('isShellPrompt recognises shell prompts and treats bare Claude >/❯ as input boxes', () => {
+  for (const p of ['john@mac ~ $', '~ %', 'root#', 'repo ➜', 'λ', '❱', 'foo>', 'cmd>  ']) {
     assert.equal(isShellPrompt(['API Error: 529', p, '', '  '], 'claude'), true, p);
   }
   assert.equal(isShellPrompt(['API Error: 529', '\x1b[32m~ %\x1b[0m']), true);
   assert.equal(isShellPrompt(['API Error: 529', '> ']), true);           // no identity ⇒ shell continuation
   assert.equal(isShellPrompt(['API Error: 529', '> '], 'codex'), true);
   assert.equal(isShellPrompt(['API Error: 529', '> '], 'claude'), false);
+  assert.equal(isShellPrompt(['API Error: 529', '❯']), true);
+  assert.equal(isShellPrompt(['API Error: 529', '❯'], 'codex'), true);
+  assert.equal(isShellPrompt(['API Error: 529', '❯'], 'claude'), false);
   assert.equal(isShellPrompt(['API Error: 529', '? for shortcuts']), false);
   assert.equal(isShellPrompt([]), false);
 });
@@ -1670,6 +1895,14 @@ test('isInputOccupied: a ">" line with text after it is a user draft', () => {
   assert.equal(isInputOccupied([]), false);
 });
 
+test('isInputOccupied: a ❯ draft inside the Claude box is occupied but a submitted capture echo is not', () => {
+  const draft = [...CLAUDE_500_STALLED];
+  draft[6] = '❯ unfinished draft';
+  assert.equal(isInputOccupied(draft, 'claude'), true);
+  assert.equal(isInputOccupied(CLAUDE_500_CAPTURE, 'claude'), false);
+  assert.equal(isInputOccupied(CLAUDE_529_CAPTURE, 'claude'), false);
+});
+
 test('isInputOccupied: Codex draft counts, the placeholder does not', () => {
   assert.equal(isInputOccupied([CODEX_ERR, '› fix the flaky test', CODEX_FOOTER]), true);
   assert.equal(isInputOccupied([CODEX_ERR, '› Ask Codex to do anything', CODEX_FOOTER]), false);
@@ -2214,7 +2447,7 @@ test('CLI entry runs when invoked through a symlinked path (DOG-6)', async () =>
 test('DOG-37 registry: OUTAGE_PATTERNS deep-equals the prior two-row table', () => {
   const expected = [
     { id: 'claude-api-error', platforms: ['claude', 'unknown'],
-      re: /^(⎿\s*)?API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i },
+      re: /^(?:[⎿⏺]\s*)?API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i },
     { id: 'codex-api-error', platforms: ['codex'],
       re: /^■\s*(stream disconnected before completion\b|We're currently experiencing high demand\b|Selected model is at capacity\b|exceeded retry limit, last status: 5\d\d\b|Error while reading the server response\b|Connection failed:|unexpected status 5\d\d\b|request timed out\b)/ },
   ];
@@ -2293,6 +2526,9 @@ test('DOG-38 registry: every provider has the complete validated shape and a uni
     provider.chrome.trailing.forEach((re) => assert.ok(re instanceof RegExp));
     assert.ok(Array.isArray(provider.chrome.draft));
     provider.chrome.draft.forEach((re) => assert.ok(re instanceof RegExp));
+    assert.ok(provider.chrome.footerStart === null
+      || (provider.chrome.footerStart.prompt instanceof RegExp
+        && provider.chrome.footerStart.rule instanceof RegExp));
     assert.equal(provider.status.kind, provider.id === 'gemini' ? 'gcp-incidents' : 'statuspage');
     assert.equal(typeof provider.status.url, 'string');
     if (provider.id === 'gemini') assert.equal(provider.status.product, 'Vertex Gemini API');
@@ -2305,6 +2541,7 @@ test('DOG-38 registry: providers and all structural nested values are frozen and
     for (const value of [
       provider, provider.agentIdentity, provider.kinds, provider.limit, provider.outage,
       ...provider.outage, provider.fingerprint, provider.chrome, provider.chrome.trailing, provider.chrome.draft,
+      ...(provider.chrome.footerStart === null ? [] : [provider.chrome.footerStart]),
       provider.status,
     ]) assert.ok(Object.isFrozen(value), `${provider.id} nested value must be frozen`);
   }
@@ -2341,6 +2578,9 @@ test('DOG-38 registry: defineProviders rejects malformed entries and duplicate i
   assert.throws(() => watchdog.defineProviders([validProvider({
     chrome: { trailing: [], draft: ['not a regex'] },
   })]), { message: 'Provider test: chrome.draft[0] must be a RegExp' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    chrome: { footerStart: { prompt: 'not a regex', rule: /^─+$/ } },
+  })]), { message: 'Provider test: chrome.footerStart.prompt must be a RegExp' });
   assert.throws(() => watchdog.defineProviders([validProvider(), validProvider()]), {
     message: 'Duplicate provider id: test',
   });
@@ -2370,7 +2610,7 @@ test('DOG-38 registry: defineProviders supplies inert defaults for optional seam
 
   assert.deepEqual(provider.outage, []);
   assert.deepEqual(provider.fingerprint, []);
-  assert.deepEqual(provider.chrome, { trailing: [], draft: [] });
+  assert.deepEqual(provider.chrome, { trailing: [], draft: [], footerStart: null });
 });
 
 test('DOG-38 registry: provider and derived platform order is stable', () => {

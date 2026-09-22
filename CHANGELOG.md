@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Detect Claude API outages behind the `⏺` history marker, including bounded wrapped continuation text. (DOG-48)
+
 ## 1.2.1 - 2026-09-16
 
 - **Zone-aware reset times**: a zone abbreviation immediately after a reset
