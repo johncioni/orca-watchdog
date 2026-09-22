@@ -310,10 +310,11 @@ allowing it. (Gemini's Google Cloud adapter is declared but not yet queried,
 because Gemini raises no outage events.)
 
 To exercise a provider without a live agent, use the fakes under `e2e/`:
-`node e2e/fake-tui.mjs <file> --gemini "3:00 PM PST"` prints Gemini's real
-banner and idle box. The `--outage`, `--outage-read`, and `--outage-marker`
-modes cover Claude's supported outage envelopes. The `--session-limit` mode
-prints the captured Claude session-limit banner and idle screen.
+`node e2e/fake-tui.mjs <file> "3am"` prints the classic Claude limit banner by
+default. The `--session-limit` mode prints the captured Claude session-limit
+banner and idle screen. `node e2e/fake-tui.mjs <file> --gemini "3:00 PM PST"`
+prints Gemini's real banner and idle box. The `--outage`, `--outage-read`, and
+`--outage-marker` modes cover Claude's supported outage envelopes.
 `node e2e/status-stub.mjs <port> --gcp "Vertex Gemini API"
 open,closed,none` serves Google Cloud-shaped incident feeds on loopback (the
 bare form serves Statuspage indicators). Point the daemon at a stub with

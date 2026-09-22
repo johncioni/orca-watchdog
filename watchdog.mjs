@@ -244,7 +244,8 @@ const VETO_RE = /approaching[^\n]*limit/i;
 // is on screen in every Claude terminal and always satisfies RESET_RE. It is
 // chrome, never evidence: dropped before the limit rule runs.
 const FOOTER_RE = /│\s*Usage\s/;
-const IANA_ZONE_LINE_RE = /^\([A-Za-z0-9._+-]+(?:\/[A-Za-z0-9._+-]+)+\)$/;
+const IANA_ZONE_LINE_RE = /^\(([^()]*\/[^()]*)\)$/;
+const CLOCK_AT_END_RE = /(?:\b\d{1,2}(?::[0-5]\d)?\s*[ap]\.?m\.?|\b(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
 
 // CSI (ESC [ … final), OSC (ESC ] … BEL|ST), charset selects (ESC ( B),
 // two-byte escapes (ESC = > 7 8 c D E H M N O Z), and stray C0/DEL bytes.
@@ -478,8 +479,13 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   if (c < 0 && kept.some(reachedLine) && RESET_RE.test(text)) {
     const isCoreEvidence = (l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l)
       && (LIMIT_RE.test(l) || RESET_RE.test(l));
-    const isRelevant = (l, i) => isCoreEvidence(l, i)
-      || (beforeInputBox(l, i) && IANA_ZONE_LINE_RE.test(l) && isCoreEvidence(window[i - 1] ?? '', i - 1));
+    const isRelevant = (l, i) => {
+      if (isCoreEvidence(l, i)) return true;
+      const zone = l.match(IANA_ZONE_LINE_RE)?.[1];
+      const previous = window[i - 1] ?? '';
+      return beforeInputBox(l, i) && zone !== undefined && ianaFormatter(zone) !== null
+        && CLOCK_AT_END_RE.test(previous) && isCoreEvidence(previous, i - 1);
+    };
     const l = lastIndex(window, isRelevant);
     // Same final-block guard the Codex limit and outage rules use: a banner the
     // agent already scrolled past (ordinary output between it and an idle empty
@@ -604,7 +610,8 @@ function clockZoneOffset(text, end) {
 
 function clockTimeZone(text, end) {
   if (text[end] === '.') end++;
-  return text.slice(end).match(/^\s*(?:\|\s*)?\(([^()]*\/[^()]*)\)/)?.[1];
+  const zone = text.slice(end).match(/^\s*(?:\(([^()]*\/[^()]*)\)|\|\s*\(([^()]*\/[^()]*)\)\s*(?=\||$))/);
+  return zone?.[1] ?? zone?.[2];
 }
 
 // Reads a clock time ("3pm", "3:30 p.m.", "14:00") out of text. Returns
@@ -634,27 +641,52 @@ function zonedClockToDate(h, m, offsetMin, now, monthDay = null) {
   return candidate;
 }
 
-function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
+const IANA_FORMATTERS = new Map();
+
+function ianaFormatter(timeZone) {
+  if (IANA_FORMATTERS.has(timeZone)) return IANA_FORMATTERS.get(timeZone);
   let formatter;
   try {
     formatter = new Intl.DateTimeFormat('en-CA', {
       timeZone, calendar: 'iso8601', numberingSystem: 'latn', hourCycle: 'h23',
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
     });
-  } catch { return null; }
+  } catch { formatter = null; }
+  IANA_FORMATTERS.set(timeZone, formatter);
+  return formatter;
+}
+
+function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
+  const formatter = ianaFormatter(timeZone);
+  if (formatter === null) return null;
 
   const partsFor = (date) => Object.fromEntries(formatter.formatToParts(date)
     .filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
   const instantFor = (year, month, day) => {
     const desired = Date.UTC(year, month - 1, day, h, m);
-    let instant = desired;
-    for (let i = 0; i < 4; i++) {
+    const offsetAt = (instant) => {
       const parts = partsFor(new Date(instant));
-      const delta = desired - Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
-      instant += delta;
-      if (delta === 0) return new Date(instant);
+      return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute) - instant;
+    };
+    const dayMs = 24 * 60 * MIN;
+    const offsets = new Set([
+      offsetAt(desired - dayMs),
+      offsetAt(desired),
+      offsetAt(desired + dayMs),
+    ]);
+    const matches = [...offsets].map((offset) => desired - offset).filter((instant) => {
+      const parts = partsFor(new Date(instant));
+      return parts.year === year && parts.month === month && parts.day === day
+        && parts.hour === h && parts.minute === m;
+    }).sort((a, b) => a - b);
+    if (matches.length > 0) {
+      const instant = matches.length > 1 && matches[0] <= now.getTime()
+        ? matches[matches.length - 1] : matches[0];
+      return new Date(instant);
     }
-    return null;
+    // A nonexistent wall time is moved forward by the size of the DST gap,
+    // matching Temporal's "compatible" disambiguation.
+    return new Date(desired - offsetAt(desired - dayMs));
   };
 
   const zonedNow = partsFor(now);
@@ -662,7 +694,6 @@ function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
   let month = (monthDay?.month ?? zonedNow.month - 1) + 1;
   let day = monthDay?.day ?? zonedNow.day;
   let candidate = instantFor(year, month, day);
-  if (candidate === null) return null;
   if (candidate <= now && now - candidate > GRACE_PAST_MS && !monthDay?.year) {
     if (monthDay) year++;
     else {

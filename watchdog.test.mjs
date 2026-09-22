@@ -542,6 +542,15 @@ test('Claude footer reset text is excluded from generic limit evidence (DOG-48 r
 test('DOG-50 session-limit wording remains the matched line above Claude footer chrome (DOG-48 review F2)', () => {
   const bannerLine = "You've hit your session limit · resets 12:30am (America/New_York)";
   const banner = detectBanner([bannerLine, '✻ Baked for 17m 13s · done 9:54 PM',
+    ...CLAUDE_DOG50_WIDE_BOX], 'claude', new Date('2026-09-22T21:54:00'));
+  assert.ok(banner);
+  assert.equal(banner.matchedLine, bannerLine);
+  assert.equal(banner.bannerText, bannerLine);
+});
+
+test('DOG-50 Claude /clear token hint is trailing chrome after a session-limit banner', () => {
+  const bannerLine = "You've hit your session limit · resets 12:30am (America/New_York)";
+  const banner = detectBanner([bannerLine, '✻ Baked for 17m 13s · done 9:54 PM',
     'new task? /clear to save 238.6k tokens',
     ...CLAUDE_DOG50_WIDE_BOX], 'claude', new Date('2026-09-22T21:54:00'));
   assert.ok(banner);
@@ -585,6 +594,19 @@ test('DOG-50 Claude usage footer alone is not a limit banner', () => {
     assert.ok(footerStart > 0, `${name}: footer`);
     assert.equal(detectBanner(tail.slice(footerStart), 'claude'), null, name);
   }
+});
+
+test('DOG-50 wrapped zone evidence requires a real IANA zone directly below a reset clock', () => {
+  const limit = 'I hit the session limit earlier; it resets at 3pm.';
+  for (const line of ['(src/foo)', '(1/2)']) {
+    assert.equal(detectBanner([limit, line, ...CLAUDE_DOG50_NARROW_BOX], 'claude'), null, line);
+  }
+  assert.equal(detectBanner([
+    "You've hit your session limit · resets 12:30am",
+    '/upgrade to increase your usage limit.',
+    '(America/New_York)',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ], 'claude'), null, 'a valid zone below a non-clock line must not extend the banner');
 });
 
 test('DOG-50 fake TUI session-limit mode reproduces the wide captured stalled block', () => {
@@ -779,7 +801,17 @@ test('DOG-49 outage near-miss classifier returns the exact rejection blocker', (
   assert.equal(watchdog.classifyOutageNearMiss(['all good', '> '], 'claude'), null);
 });
 
-test('DOG-50 mapped Claude team identity still requires a recognised outage envelope', () => {
+test('DOG-49 unknown inference requires a fully recognised Claude outage envelope', () => {
+  const terminal = {};
+  const lines = ['◆ API Error: 529 Overloaded', '> '];
+  const platform = inferPlatform(terminal);
+  const banner = detectBanner(lines, platform);
+  assert.equal(platform, 'unknown');
+  assert.equal(banner, null);
+  assert.equal(inferPlatform(terminal, banner), 'unknown');
+});
+
+test('DOG-50 maps the Claude team identity before banner inference', () => {
   const terminal = { agentIdentity: 'claude-agent-teams' };
   const lines = ['◆ API Error: 529 Overloaded', '> '];
   const platform = inferPlatform(terminal);
@@ -851,7 +883,6 @@ test('agentIdentity is authoritative; banner is the fallback; else unknown', () 
   const claudeBanner = { patternId: 'claude-api-error' };
   assert.equal(inferPlatform({ agentIdentity: 'codex' }, claudeBanner), 'codex');
   assert.equal(inferPlatform({ agentIdentity: 'claude' }, null), 'claude');
-  assert.equal(inferPlatform({ agentIdentity: 'claude-agent-teams' }, null), 'claude');
   assert.equal(inferPlatform({}, claudeBanner), 'claude');
   assert.equal(inferPlatform(undefined, claudeBanner), 'claude');
   assert.equal(inferPlatform({ agentIdentity: 'gpt' }, null), 'unknown');
@@ -919,6 +950,40 @@ test('an invalid IANA reset zone falls back to the current local-time behavior (
   const now = new Date('2026-03-07T12:00:00Z');
   const local = parseResetTime('resets 3:30am', now);
   assert.equal(parseResetTime('resets 3:30am (Mars/Olympus_Mons)', now).toISOString(), local.toISOString());
+});
+
+test('an IANA reset zone after a separator must occupy the whole segment (DOG-50 review F2)', () => {
+  const now = new Date('2026-09-16T12:00:00Z');
+  const local = parseResetTime('resets 3am', now);
+  assert.equal(
+    parseResetTime('resets 3am | (Asia/Tokyo) servers available again soon', now).toISOString(),
+    local.toISOString()
+  );
+  const banner = detectBanner([
+    'Claude usage limit reached. Your limit will reset at 3am',
+    '⏺ note',
+    '(Asia/Tokyo) servers available again soon',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ], 'claude', now);
+  assert.ok(banner);
+  assert.equal(newEvent({ handle: 'term_zone_suffix', platform: 'claude', banner }, now).resetAt,
+    local.toISOString());
+});
+
+test('IANA reset clocks resolve DST gaps forward with the pre-transition offset (DOG-50 review F3)', () => {
+  for (const [text, now, expected] of [
+    ['resets 2:30am (America/New_York)', '2026-03-07T15:00:00Z', '2026-03-08T07:30:00.000Z'],
+    ['resets 2:30am (Australia/Adelaide)', '2026-10-03T04:00:00Z', '2026-10-03T17:00:00.000Z'],
+  ]) {
+    assert.equal(parseResetTime(text, new Date(now)).toISOString(), expected, text);
+  }
+});
+
+test('IANA reset clocks choose the later overlap occurrence when the earlier one has passed (DOG-50 review F3)', () => {
+  assert.equal(
+    parseResetTime('resets 1:30am (America/New_York)', new Date('2026-11-01T06:10:00Z')).toISOString(),
+    '2026-11-01T06:30:00.000Z'
+  );
 });
 
 test('unknown or nonadjacent zone abbreviations leave the local clock unchanged (DOG-41)', () => {
