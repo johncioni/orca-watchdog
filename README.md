@@ -202,6 +202,15 @@ finds against the events it is already tracking, and then — for any event whos
 resume is due — walks a fixed sequence of safety gates before it will send. If
 any gate is inconclusive, it holds and tries again on a later tick.
 
+Tracked events stay frozen when Orca returns no terminal list, an empty list
+while events exist, or no successful reads while events exist. A degraded tick
+that lists a terminal clears its pending disappearance mark. A terminal missing
+from healthy ticks is removed after 12 hours; one that reappears keeps its event
+and attempt count. Once reads recover, an unsent limit event can resume after
+its reset if the original banner remains on screen. After a send, a reset that
+parses later still holds the event. Event removals log the terminal, kind, and
+reason.
+
 ```mermaid
 flowchart TD
     A["launchd timer — every 5 min"] --> P{"Paused, or another<br/>tick already running?"}
@@ -242,6 +251,8 @@ The details behind the diagram:
   Normally one send per event, with up to two retries 30 minutes apart before it
   gives up loudly in the log. If the banner is still on screen but its reset time
   moves materially later, the watchdog honours the new time and keeps waiting.
+  An unsent, unchanged banner keeps its stored reset even when its old clock
+  would parse as the next day after a long read outage.
 - **API outage.** Waits 10 minutes, then before each send re-checks the provider's
   status feed. A `major`/`critical` Statuspage indicator (or an open Google Cloud
   incident naming the product) holds the send without consuming an attempt — and

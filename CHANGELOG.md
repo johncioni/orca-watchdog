@@ -2,6 +2,17 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Keep tracked limit events through degraded Orca list and read results. Clear
+  a disappearance mark when a degraded list includes the terminal, and confirm
+  a missing terminal across healthy ticks at least 12 hours apart. Log each
+  event removal with its reason. After reads recover, an unsent event with its
+  original banner can resume past its reset; changed banners and events already
+  sent still honour a later parsed reset. (DOG-51)
+
 ## 1.2.4 - 2026-09-22
 
 ### Fixed
