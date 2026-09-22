@@ -8,9 +8,22 @@ All notable changes to Orca Watchdog are documented here.
 
 - Declare outage markers and bounded wrapping separately from semantic payloads, with sanitized blocker diagnostics for rejected near misses. (DOG-49)
 
-### Fixed
+## 1.2.2 - 2026-09-22
 
-- Detect Claude API outages behind the `⏺` history marker, including bounded wrapped continuation text. (DOG-48)
+- **Claude outages behind the `⏺` history marker are detected again**: the
+  current Claude Code TUI prints `⏺ API Error: 5xx …` wrapped over indented
+  lines, then a `✻ Worked for …` line, a `❯` input box, and a multi-line
+  statusline. The outage row accepts the marker, up to four adjacent indented
+  continuation lines are tolerated, and the footer is recognised by structure
+  (everything at or below the closed `❯` box), which holds across terminal
+  widths, models, and status-line plugins. The limit rule now takes evidence
+  only from above the box, so the footer's own "resets in" can never set a
+  limit's reset time. Bare `❯` is Claude's empty box only with a claude
+  identity; a draft inside the box blocks a send. Detection window is 18 lines.
+  (DOG-48)
+- **`orca-watchdog logs` exits 0 whenever its stdout reader goes away**
+  (ENOTCONN as well as EPIPE), so `logs | head` no longer reports a failure.
+  (DOG-43)
 
 ## 1.2.1 - 2026-09-16
 
