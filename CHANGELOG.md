@@ -2,6 +2,15 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Keep tracked limit events through degraded Orca list and read results. Confirm
+  a missing terminal across healthy ticks at least 10 minutes apart, and log
+  each event removal with its reason. A confirmed banner can still resume after
+  its reset time when reads recover. (DOG-51)
+
 ## 1.2.4 - 2026-09-22
 
 ### Fixed

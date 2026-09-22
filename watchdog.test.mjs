@@ -1320,12 +1320,18 @@ test('banner gone deletes the event (success)', () => {
   assert.deepEqual(r.events, {});
 });
 
-test('terminal gone deletes the event', () => {
+test('terminal gone needs a later healthy tick at least 10 minutes after the first miss', () => {
   const key = eventKey(H);
   const state = { [key]: { ...LIMIT_EV, bannerText: BANNER, detectedAt: NOW.toISOString(),
     resetAt: NOW.toISOString(), attempts: 0, lastAttemptAt: null, status: 'waiting' } };
-  const r = reconcile(state, [], NOW);
-  assert.deepEqual(r.events, {});
+  const first = reconcile(state, [], NOW);
+  assert.equal(first.events[key].vanishedAt, NOW.toISOString());
+  assert.deepEqual(first.sendCandidates, []);
+  const early = reconcile(first.events, [], at(9));
+  assert.ok(early.events[key]);
+  const confirmed = reconcile(early.events, [], at(10));
+  assert.deepEqual(confirmed.events, {});
+  assert.deepEqual(confirmed.sendCandidates, []);
 });
 
 test('same banner reappearing after absence is a fresh event', () => {
@@ -1337,6 +1343,17 @@ test('same banner reappearing after absence is a fresh event', () => {
   assert.deepEqual(gone.events, {});
   const back = reconcile(gone.events, obs(BANNER), new Date(NOW.getTime() + min(15)));
   assert.equal(Object.values(back.events)[0].attempts, 0);
+});
+
+test('listed again after one vanish keeps attempts and clears the mark even when unread', () => {
+  const state = { [H]: { ...LIMIT_EV, bannerText: BANNER, detectedAt: NOW.toISOString(),
+    resetAt: NOW.toISOString(), attempts: 2, lastAttemptAt: NOW.toISOString(), status: 'waiting' } };
+  const missing = reconcile(state, [], NOW, []);
+  assert.equal(missing.events[H].vanishedAt, NOW.toISOString());
+  const returned = reconcile(missing.events, [], at(30), [H]);
+  assert.equal(returned.events[H].vanishedAt, undefined);
+  assert.equal(returned.events[H].attempts, 2);
+  assert.deepEqual(returned.sendCandidates, []);
 });
 
 test('countdown digit changes do not spawn new events', () => {
@@ -1376,6 +1393,12 @@ test('validateEvent accepts clearedAt absent or ISO, rejects garbage', () => {
   assert.equal(validateEvent(H, base), null);
   assert.equal(validateEvent(H, { ...base, clearedAt: at(1).toISOString() }), null);
   assert.match(validateEvent(H, { ...base, clearedAt: 'soon' }), /clearedAt/);
+});
+
+test('validateEvent accepts a timestamp vanishedAt and rejects malformed marks', () => {
+  const base = { ...V2 };
+  assert.equal(validateEvent(H, { ...base, vanishedAt: NOW.toISOString() }), null);
+  assert.match(validateEvent(H, { ...base, vanishedAt: 'yesterday' }), /vanishedAt/);
 });
 
 // --- outage lifecycle ---
@@ -1721,6 +1744,107 @@ function harness({ tail, terminals, indicator = 'none', state = {}, now = at(10)
 const T = { handle: H, connected: true, writable: true, agentIdentity: 'claude' };
 const OUTAGE_TAIL = [CLAUDE_529, '', '> ', '? for shortcuts'];
 
+test('DOG-51: limit events survive alternating failed 7-, 4-, and 0-terminal ticks and resume once after reset', async () => {
+  const first = { ...T, handle: 'term_22107880' };
+  const second = { ...T, handle: 'term_eb640e3a' };
+  const extras = Array.from({ length: 5 }, (_, i) => ({ ...T, handle: `term_extra_${i}` }));
+  const tail = ['Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).', '> '];
+  let state = {}, listed = [], failing = false, now = new Date('2026-09-22T06:33:00Z');
+  const sent = [], logs = [];
+  const deps = {
+    orca: async (args) => {
+      const verb = args[1];
+      if (verb === 'list') return { terminals: listed };
+      if (verb === 'read') {
+        if (failing) throw new Error('orca read unavailable');
+        return { terminal: { tail } };
+      }
+      if (verb === 'wait') return {};
+      if (verb === 'send') { sent.push(args[args.indexOf('--terminal') + 1]); return {}; }
+      throw new Error(`unexpected orca call ${args.join(' ')}`);
+    },
+    fetchImpl: fakeFetch(() => okJson({ status: { indicator: 'none' } })),
+    env: {}, now: () => now, loadState: () => structuredClone(state),
+    saveState: (events) => { state = structuredClone(events); },
+    log: (level, message) => logs.push(`${level} ${message}`), reapChoices: () => 0, isDisabled: () => false,
+  };
+  const run = async (time, terminals, readFails = false) => {
+    now = new Date(time); listed = terminals; failing = readFails;
+    await tick({ dryRun: false }, deps);
+  };
+  await run('2026-09-22T06:33:00Z', [first]);
+  await run('2026-09-22T06:38:00Z', [first, second]);
+  assert.deepEqual(Object.keys(state).sort(), [first.handle, second.handle].sort());
+  assert.equal(state[first.handle].resetAt, '2026-09-22T09:40:00.000Z');
+  await run('2026-09-22T07:31:00Z', [first, second, ...extras], true);
+  await run('2026-09-22T07:36:00Z', [second, ...extras.slice(0, 3)], true);
+  await run('2026-09-22T07:41:00Z', [], true);
+  await run('2026-09-22T09:41:00Z', [first, second, ...extras], true);
+  assert.deepEqual(Object.keys(state).sort(), [first.handle, second.handle].sort());
+  assert.deepEqual(sent, []);
+  await run('2026-09-22T09:43:00Z', [first, second]);
+  await run('2026-09-22T09:48:00Z', [first, second]);
+  assert.deepEqual(sent.sort(), [first.handle, second.handle].sort());
+  for (const handle of [first.handle, second.handle]) assert.equal(state[handle].attempts, 1);
+  assert.equal(logs.filter((line) => /warn degraded tick:/.test(line)).length, 4);
+});
+
+test('DOG-51: malformed or empty terminal list freezes stored events with one degraded warning', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: BANNER,
+    detectedAt: at(0).toISOString(), resetAt: at(0).toISOString(),
+    attempts: 0, lastAttemptAt: null, status: 'waiting', clearedAt: at(1).toISOString() } };
+  for (const [response, reason] of [[{}, 'missing terminals array'], [{ terminals: [] }, 'empty terminal list']]) {
+    const h = harness({ tail: [], terminals: [], state, now: at(30) });
+    h.deps.orca = async (args) => {
+      if (args[1] === 'list') return response;
+      throw new Error(`unexpected orca call ${args.join(' ')}`);
+    };
+    const logs = [];
+    h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+    await tick({ dryRun: false }, h.deps);
+    assert.deepEqual(h.saved(), state);
+    assert.equal(logs.filter((line) => line.startsWith('warn degraded tick:')).length, 1);
+    assert.ok(logs.some((line) => line.includes(reason)), logs.join('\n'));
+    assert.deepEqual(h.sent, []);
+  }
+});
+
+test('DOG-51: all attempted reads failing freezes a prior vanished mark', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: BANNER,
+    detectedAt: at(0).toISOString(), resetAt: at(0).toISOString(),
+    attempts: 1, lastAttemptAt: at(1).toISOString(), status: 'waiting', vanishedAt: at(2).toISOString() } };
+  const other = { ...T, handle: 'term_other' };
+  const h = harness({ tail: [], terminals: [other], state, now: at(30), readThrows: true });
+  const logs = [];
+  h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.saved(), state);
+  assert.equal(logs.filter((line) => line.startsWith('warn degraded tick:')).length, 1);
+  assert.ok(logs.some((line) => line.includes('all attempted reads failed')));
+});
+
+test('DOG-51: a closed terminal is removed only after 10 healthy minutes and logged', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: BANNER,
+    detectedAt: at(0).toISOString(), resetAt: at(0).toISOString(),
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const other = { ...T, handle: 'term_other' };
+  const run = async (events, now) => {
+    const h = harness({ tail: ['ordinary output'], terminals: [other], state: events, now });
+    const logs = [];
+    h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+    await tick({ dryRun: false }, h.deps);
+    assert.deepEqual(h.sent, []);
+    return { events: h.saved(), logs };
+  };
+  const first = await run(state, at(0));
+  assert.equal(first.events[H].vanishedAt, at(0).toISOString());
+  const early = await run(first.events, at(9));
+  assert.ok(early.events[H]);
+  const confirmed = await run(early.events, at(10));
+  assert.deepEqual(confirmed.events, {});
+  assert.ok(confirmed.logs.some((line) => line.startsWith(`info removed limit on ${H}: vanished`)), confirmed.logs.join('\n'));
+});
+
 test('operational observations report guard reasons without changing resume decisions', async () => {
   for (const [scenario, expected] of [['offline', 'offline'], ['provider', 'provider health major'],
     ['busy', 'busy terminal'], ['read', 'failed read'], ['draft', 'draft input'], ['send', 'failed send'], ['success', null]]) {
@@ -1946,7 +2070,7 @@ test('reapChoices: unlink failure does not throw or count as reaped (DOG-21)', (
   assert.deepEqual(fs.readdirSync(choices), ['blocked.json']);
 });
 
-test('tick: reaps reconciled orphans while retaining an unread live choice; dry-run is inert (DOG-21)', async (t) => {
+test('tick: reaps choices after confirmed vanish; degraded and dry-run ticks retain them (DOG-21)', async (t) => {
   const { dir } = alertFiles(t); const choices = path.join(dir, 'choices');
   fs.mkdirSync(choices);
   const live = `${H}.ep-1.json`; const orphan = 'term_absent.ep-old.json';
@@ -1958,9 +2082,20 @@ test('tick: reaps reconciled orphans while retaining an unread live choice; dry-
     h.deps.reapChoices = (names) => watchdog.reapChoices(names, dir);
     await tick({ dryRun }, h.deps);
     assert.equal(fs.existsSync(path.join(choices, live)), true);
-    assert.equal(fs.existsSync(path.join(choices, orphan)), dryRun);
+    assert.equal(fs.existsSync(path.join(choices, orphan)), true);
     assert.deepEqual(h.sent, []);
   }
+  const ev = LO({ alertedAt: NOW.toISOString() });
+  const first = alertHarness({ ev, state: { [H]: ev, term_absent: { ...ev, handle: 'term_absent', episodeId: 'ep-old' } } });
+  first.deps.reapChoices = (names) => watchdog.reapChoices(names, dir);
+  await tick({ dryRun: false }, first.deps);
+  assert.equal(fs.existsSync(path.join(choices, orphan)), true);
+  const confirmed = alertHarness({ ev, state: first.saved(), now: at(10) });
+  confirmed.deps.reapChoices = (names) => watchdog.reapChoices(names, dir);
+  await tick({ dryRun: false }, confirmed.deps);
+  assert.equal(fs.existsSync(path.join(choices, live)), true);
+  assert.equal(fs.existsSync(path.join(choices, orphan)), false);
+  assert.deepEqual(confirmed.sent, []);
 });
 
 test('tick: reaper runs after consent consumption and errors do not block sends (DOG-21)', async () => {
@@ -2460,6 +2595,37 @@ test('tick: banner cleared on fresh re-read holds one tick then deletes; kind ch
   assert.equal(changed.saved()[H].kind, 'limit'); assert.equal(changed.saved()[H].attempts, 0);
 });
 
+test('DOG-51: banner clearance and both replacement paths log the removed event', async () => {
+  const removed = async (state, tail) => {
+    const h = harness({ tail, terminals: [T], state });
+    const logs = [];
+    h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+    await tick({ dryRun: false }, h.deps);
+    return { events: h.saved(), logs };
+  };
+  const old = seed();
+  const first = await removed(old, ['ordinary output', '> ', '? for shortcuts']);
+  assert.ok(first.events[H].clearedAt);
+  const cleared = await removed(first.events, ['ordinary output', '> ', '? for shortcuts']);
+  assert.equal(cleared.events[H], undefined);
+  assert.ok(cleared.logs.some((line) => line.startsWith(`info removed outage on ${H}: banner cleared`)), cleared.logs.join('\n'));
+
+  const replaced = await removed(old, [...CLAUDE_BANNER, '? for shortcuts']);
+  assert.equal(replaced.events[H].kind, 'limit');
+  assert.ok(replaced.logs.some((line) => line.startsWith(`info removed outage on ${H}: replaced`)), replaced.logs.join('\n'));
+
+  const h = harness({ tail: OUTAGE_TAIL, terminals: [T], state: old });
+  const logs = [];
+  h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+  let reads = 0;
+  const inner = h.deps.orca;
+  h.deps.orca = async (args) => args[1] === 'read' && ++reads === 2
+    ? { terminal: { tail: [...CLAUDE_BANNER, '? for shortcuts'] } } : inner(args);
+  await tick({ dryRun: false }, h.deps);
+  assert.equal(h.saved()[H].kind, 'limit');
+  assert.ok(logs.some((line) => line.startsWith(`info removed outage on ${H}: replaced`)), logs.join('\n'));
+});
+
 test('tick: a limit banner trailing a shell prompt is stale on the fresh re-read; held then deleted, never sent (DOG-24)', async () => {
   // With the generic-limit final-block guard (1.2), a banner the agent scrolled
   // past to a shell prompt no longer detects on the fresh re-read: it is held as
@@ -2489,8 +2655,11 @@ test('tick: shell-prompt guard still drops a detecting banner ending in a bare "
   const term = { ...T, agentIdentity: undefined };
   // "11pm" re-parses to the stored due time so the reset-shift hold (DOG-24) does not fire first.
   const h = harness({ tail: ['Claude usage limit reached. Your limit will reset at 11pm.', '> '], terminals: [term], state: st });
+  const logs = [];
+  h.deps.log = (level, message) => logs.push(`${level} ${message}`);
   await tick({ dryRun: false }, h.deps);
   assert.deepEqual(h.sent, []); assert.deepEqual(h.saved(), {});
+  assert.ok(logs.some((line) => line.startsWith(`info removed limit on ${H}: agent exited to shell`)), logs.join('\n'));
 });
 
 test('tick: pause appearing mid-tick halts the remaining sends in the same tick (DOG-24)', async () => {

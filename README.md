@@ -202,6 +202,13 @@ finds against the events it is already tracking, and then — for any event whos
 resume is due — walks a fixed sequence of safety gates before it will send. If
 any gate is inconclusive, it holds and tries again on a later tick.
 
+Tracked events stay frozen when Orca returns no terminal list, an empty list
+while events exist, or failed reads for every terminal it tried. A missing
+terminal on a healthy tick is removed only after it stays missing for at least
+10 minutes; a terminal that reappears keeps its event and attempt count. Once
+reads recover, a limit event whose reset has passed can resume if its banner is
+still on screen. Event removals are logged with the terminal, kind, and reason.
+
 ```mermaid
 flowchart TD
     A["launchd timer — every 5 min"] --> P{"Paused, or another<br/>tick already running?"}

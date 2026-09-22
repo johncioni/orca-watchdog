@@ -225,6 +225,8 @@ const GRACE_PAST_MS = 2 * 60 * MIN; // absolute time this recently past = alread
 // than the stored one is honoured before a due send (DOG-24). Above any sub-tick
 // reparse jitter of a counting-down relative banner; only a real shift trips it.
 const RESET_REFRESH_MIN_MS = 5 * MIN;
+// Longer than the 5-minute tick: one partial terminal list cannot confirm a closure.
+const VANISH_CONFIRM_MS = 10 * MIN;
 const TAIL_LINES = 18;              // captured Claude tail (15 lines) + 3-line margin (DOG-48)
 const READ_BUDGET_MS = 3 * MIN;    // stop reading terminals before the 4-min tick deadline
 const READ_CONCURRENCY = 4;        // parallel `terminal read`s per tick; orca serialises beyond a few
@@ -571,6 +573,7 @@ export function validateEvent(key, ev) {
     || (ev.status === 'gave_up' && SCHEDULE[ev.kind].deadlineMs !== null);
   if (ev.lastAttemptAt === null && (!unsentStatus || ev.attempts > 0)) return 'lastAttemptAt: required once an attempt was made';
   if (ev.clearedAt !== undefined && !isIso(ev.clearedAt)) return 'clearedAt: not a timestamp';
+  if (ev.vanishedAt !== undefined && !isIso(ev.vanishedAt)) return 'vanishedAt: not a timestamp';
   return null;
 }
 
@@ -770,6 +773,7 @@ export const eventKey = (handle) => handle;
 export function reconcile(state, observations, now, liveHandles = null, newEpisodeId = randomUUID) {
   const events = structuredClone(state);
   const sendCandidates = [];
+  const removals = [];
   const byHandle = new Map(observations.map((o) => [o.handle, { ...o, platform: o.platform ?? 'unknown' }]));
   // Terminals that still EXIST this tick (from `terminal list`) — a superset of
   // the ones we managed to READ: a read can fail on transient orca socket churn
@@ -777,18 +781,28 @@ export function reconcile(state, observations, now, liveHandles = null, newEpiso
   const live = liveHandles ? new Set(liveHandles) : new Set(byHandle.keys());
 
   for (const [key, ev] of Object.entries(events)) {
-    if (!live.has(ev.handle)) { delete events[key]; continue; }             // 1. vanished
+    if (!live.has(ev.handle)) {                                                // 1. vanished
+      if (!ev.vanishedAt) { ev.vanishedAt = now.toISOString(); continue; }
+      if (now - new Date(ev.vanishedAt) < VANISH_CONFIRM_MS) continue;
+      removals.push({ handle: ev.handle, kind: ev.kind, reason: 'vanished' });
+      delete events[key]; continue;
+    }
+    delete ev.vanishedAt;                                                     // listed again, even if unread
     const o = byHandle.get(ev.handle);
     if (!o) continue;                                                        // 2. live but unread: freeze
     if (!o.banner) {                                                         // 3. banner cleared
       // One absent read is not proof: the agent scrolls, orca returns a short
       // tail, a redraw lands mid-read. Deleting on the first miss resets
       // attempts to 0 and lets a flickering banner be sent to without bound.
-      if (ev.clearedAt) { delete events[key]; continue; }                    //    3a. second consecutive miss
+      if (ev.clearedAt) {                                                     //    3a. second consecutive miss
+        removals.push({ handle: ev.handle, kind: ev.kind, reason: 'banner cleared' });
+        delete events[key]; continue;
+      }
       ev.clearedAt = now.toISOString(); continue;                            //    3b. first miss: hold
     }
     delete ev.clearedAt;                                                     //    banner present again
     if (ev.status !== 'dismissed' && (o.banner.kind !== ev.kind || (o.platform !== 'unknown' && o.platform !== ev.platform))) {
+      removals.push({ handle: ev.handle, kind: ev.kind, reason: 'replaced' });
       events[key] = newEvent(o, now, newEpisodeId); continue;                 // 4. replace (never a candidate this tick)
     }
     const sch = SCHEDULE[ev.kind];                                           // 5. same kind & platform
@@ -809,7 +823,7 @@ export function reconcile(state, observations, now, liveHandles = null, newEpiso
   for (const o of byHandle.values()) {
     if (o.banner && !events[eventKey(o.handle)]) events[eventKey(o.handle)] = newEvent(o, now, newEpisodeId);
   }
-  return { events, sendCandidates };
+  return { events, sendCandidates, removals };
 }
 
 const SHELL_PROMPT_RE = /[$%#❯➜λ❱>]$/;
@@ -1142,8 +1156,11 @@ export async function tick({ dryRun }, depsIn = {}) {
   const waiting = (handle, reason) => observe('waiting', handle, reason);
   const log = deps.log;   // shadows the module logger so tests can silence it
   let terminals;
+  let terminalsArrayPresent;
   try {
-    terminals = (await deps.orca(['terminal', 'list'])).terminals ?? [];
+    const listed = (await deps.orca(['terminal', 'list']))?.terminals;
+    terminalsArrayPresent = Array.isArray(listed);
+    terminals = terminalsArrayPresent ? listed : [];
   } catch (e) {
     if (isUnavailableError(e)) { observe('unavailable'); log('debug', `orca unavailable: ${e.message.split('\n')[0]}`); return; }
     throw e;
@@ -1154,10 +1171,12 @@ export async function tick({ dryRun }, depsIn = {}) {
   const startedAt = Date.now();
   const queue = terminals.filter((t) => t.connected && t.writable);
   let budgetSpent = false;
+  let attemptedReads = 0;
   const worker = async () => {
     while (queue.length > 0) {
       if (readBudgetExceeded(startedAt, Date.now())) { budgetSpent = true; return; }
       const t = queue.shift();
+      attemptedReads += 1;
       try {
         const tail = await readTail(t.handle, deps.orca);
         const banner = detectBanner(tail, inferPlatform(t), deps.now());
@@ -1179,10 +1198,17 @@ export async function tick({ dryRun }, depsIn = {}) {
 
   const now = deps.now();
   const state = deps.loadState();
-  // Pass every terminal that still exists so reconcile can tell a vanished
-  // terminal (delete) from one merely unread this tick (freeze).
+  const degradedReason = !terminalsArrayPresent ? 'missing terminals array'
+    : terminals.length === 0 && Object.keys(state).length > 0 ? 'empty terminal list with stored events'
+    : attemptedReads > 0 && observations.length === 0 ? 'all attempted reads failed' : null;
+  if (degradedReason) log('warn', `degraded tick: ${degradedReason}; events frozen`);
+  // A degraded list/read result is no evidence about stored events. Otherwise
+  // pass listed handles so reconcile can distinguish missing from unread.
   const liveHandles = terminals.map((t) => t.handle);
-  const { events, sendCandidates } = reconcile(state, observations, now, liveHandles, deps.newEpisodeId);
+  const { events, sendCandidates, removals } = degradedReason
+    ? { events: structuredClone(state), sendCandidates: [], removals: [] }
+    : reconcile(state, observations, now, liveHandles, deps.newEpisodeId);
+  for (const { handle, kind, reason } of removals) log('info', `removed ${kind} on ${handle}: ${reason}`);
   for (const ev of Object.values(events)) {
     if (observations.some(o => o.handle === ev.handle)) waiting(ev.handle,
       ev.status === 'gave_up' ? 'exhausted retries' : ev.status === 'awaiting-user' ? 'user choice'
@@ -1308,6 +1334,7 @@ export async function tick({ dryRun }, depsIn = {}) {
     const platform = inferPlatform(term, fresh);
     if (fresh.kind !== ev.kind || (platform !== 'unknown' && platform !== ev.platform)) {
       log('info', `skip ${ev.handle}: banner changed to ${fresh.kind}/${platform} before send; fresh event`);
+      log('info', `removed ${ev.kind} on ${ev.handle}: replaced`);
       events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
     }
     if (ev.kind === 'limit') {                                                       // 3b. reset moved later
@@ -1322,6 +1349,7 @@ export async function tick({ dryRun }, depsIn = {}) {
     }
     if (isShellPrompt(tail, term?.agentIdentity)) {                                  // 4. prompt guard
       log('warn', `skip ${ev.handle}: shell prompt on last line, agent has exited; event dropped`);
+      log('info', `removed ${ev.kind} on ${ev.handle}: agent exited to shell`);
       observe('resolved', ev.handle);   // the event is gone: don't leave a stale waiting reason in status
       delete events[key]; deps.saveState(events); continue;
     }
