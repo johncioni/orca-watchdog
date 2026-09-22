@@ -2,6 +2,24 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-22: An unsent limit event with an unchanged banner skips the moved-later hold
+
+The DOG-24 pre-send "reset moved later" hold is skipped only when the fresh banner
+text equals the stored text and `attempts === 0`, so a limit resumes once reads
+recover, however long they were down. After a send, identical text keeps the hold:
+a limit that has not really reset reprints the same banner. John approved this over
+a docs-only "within 2 hours" caveat as the better long-term rule.
+PR: https://github.com/johncioni/orca-watchdog/pull/56
+
+## 2026-09-22: Orca list and read results are weak evidence of a closed terminal
+
+A tick is degraded (events frozen, one `warn`) when `terminal list` has no array,
+is empty with stored events, attempts no reads, or every read fails; a read with no
+`tail` array is a failed read. A missing handle gets `vanishedAt` and the event is
+removed only after 12 h of healthy misses; any listing clears the mark. Every
+removal is logged.
+PR: https://github.com/johncioni/orca-watchdog/pull/56
+
 ## 2026-09-22: Reset clocks honour a parenthesised IANA zone
 
 `resets 12:30am (America/New_York)` resolves through `Intl.DateTimeFormat`, not

@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-22: Deleting an event on one missing or short confirmation of its handle
+
+Deleting on the first tick a handle was missing from `terminal list` lost two limit
+events during the 2026-09-22 Orca CLI outage (7-, 4-, and 0-terminal lists
+alternating for hours). A 10-minute confirmation window was still too short:
+partial lists persisted 20+ minutes. Hence the 12 h window and degraded-tick freeze.
+PR: https://github.com/johncioni/orca-watchdog/pull/56
+
 ## 2026-09-22: Any parenthesised slash line as the wrapped zone
 
 The first DOG-50 rule took any `(x/y)` line under any evidence line as the wrapped
