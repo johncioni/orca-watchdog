@@ -309,8 +309,9 @@ because Gemini raises no outage events.)
 
 To exercise a provider without a live agent, use the fakes under `e2e/`:
 `node e2e/fake-tui.mjs <file> --gemini "3:00 PM PST"` prints Gemini's real
-banner and idle box (`--outage` for Claude's outage banner, no flag for Claude's
-limit banner), and `node e2e/status-stub.mjs <port> --gcp "Vertex Gemini API"
+banner and idle box (`--outage`, `--outage-read`, and `--outage-marker` cover
+Claude's supported outage envelopes; no flag prints Claude's limit banner), and
+`node e2e/status-stub.mjs <port> --gcp "Vertex Gemini API"
 open,closed,none` serves Google Cloud-shaped incident feeds on loopback (the
 bare form serves Statuspage indicators). Point the daemon at a stub with
 `WATCHDOG_STATUS_URL_<PLATFORM>` (loopback URLs only). Adding an agent is a

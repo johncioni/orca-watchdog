@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-22: Last payload-matching line as the outage candidate
+
+Picking the last line whose payload regex matches, before checking the marker,
+let a chrome line quoting the error (`⎿ Tip: … API Error: 500 …`) shadow a real
+banner above it. Detection uses the last line with a valid marker; the
+payload-only line only feeds the near-miss label.
+PR: https://github.com/johncioni/orca-watchdog/pull/52
+
 ## 2026-09-22: Content-pinned claude-hud statusline regexes as trailing chrome
 
 Nine anchored patterns matched the narrow Fable layout (`[Fable 5.1 ◔ medium]`,

@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Changed
+
+- Declare outage markers and bounded wrapping separately from semantic payloads, with sanitized blocker diagnostics for rejected near misses. (DOG-49)
+
 ## 1.2.2 - 2026-09-22
 
 - **Claude outages behind the `⏺` history marker are detected again**: the
