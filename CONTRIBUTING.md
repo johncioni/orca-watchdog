@@ -40,6 +40,21 @@ node watchdog.mjs --dry-run   # observe one tick without sending anything
 5. Open a pull request against `main`. CI runs the test suite on macOS across the
    supported Node versions.
 
+## Capturing a fixture
+
+Read the terminal without sending input:
+
+```bash
+orca terminal read --terminal <handle> --json
+```
+
+Save `result.terminal.tail` verbatim as JSON under `.superpowers/captures/`.
+That directory is gitignored. Never use `orca terminal send` while collecting
+evidence. Before copying the lines into a committed test constant, replace
+secrets and personal paths without changing markers, spacing, or wrapping.
+Declare the shape in the provider row's `envelope`, then add it to the
+table-driven fixtures and the matching `e2e/fake-tui.mjs` mode.
+
 ## Building a release (maintainers)
 
 ```bash

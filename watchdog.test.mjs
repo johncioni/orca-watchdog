@@ -139,6 +139,40 @@ const CLAUDE_529 = 'API Error: 529 {"type":"error","error":{"type":"overloaded_e
 const CLAUDE_MARKER_500 = '⏺ API Error: 500 Internal server error. This is ...';
 const CLAUDE_MARKER_529 = '⏺ API Error: 529 Overloaded. This is a ...';
 const CLAUDE_CONTINUATIONS = ['  temporary issue with the provider.', '  Please try again shortly.'];
+const CLAUDE_OUTAGE_PAYLOAD = 'API Error: 500 Internal server error. This is';
+// The first three lines are captured verbatim; the fourth pins the documented
+// terminal-width allowance without broadening the payload allowlist.
+const CLAUDE_WRAP_CONTINUATIONS = [
+  '  a server-side issue, usually temporary — try',
+  '  again in a moment. If it persists, check',
+  '  https://status.claude.com.',
+  '  Please retry after the provider recovers.',
+];
+const CLAUDE_FAKE_FOOTER = [
+  '✻ Worked for 1m 42s · done 8:57 PM',
+  '─'.repeat(55),
+  '❯',
+  '─'.repeat(55),
+  '  [Fable 5.1 ◔ medium]',
+  '  Context █░░░ 24%',
+  '  Usage   ███░ 78% (resets in 3h 20m)',
+  '  2 CLAUDE.md | 15 hooks',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
+];
+const fakeOutageLines = (marker, continuationCount, { ansi = false } = {}) => [
+  '─'.repeat(60),
+  ansi
+    ? `\x1b[36m${marker}\x1b[0m \x1b[31m${CLAUDE_OUTAGE_PAYLOAD}\x1b[0m`
+    : `${marker}${CLAUDE_OUTAGE_PAYLOAD}`,
+  ...CLAUDE_WRAP_CONTINUATIONS.slice(0, continuationCount),
+  ...CLAUDE_FAKE_FOOTER,
+];
+const FAKE_TUI_PATH = fileURLToPath(new URL('./e2e/fake-tui.mjs', import.meta.url));
+const runFakeTui = (...args) => {
+  const result = spawnSync(process.execPath, [FAKE_TUI_PATH, 'unused-output', ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.replace(/\n$/, '').split('\n');
+};
 // Verbatim physical lines from .superpowers/captures/dog48-term_*.json.
 const CLAUDE_500_CAPTURE = [
   '⏺ API Error: 500 Internal server error. This is',
@@ -287,6 +321,98 @@ test('detects observed ⏺ 500/529 outages with bounded wrapped continuations fo
       assert.equal(banner.kind, 'outage');
       assert.equal(banner.patternId, 'claude-api-error');
       assert.equal(inferPlatform(terminal, banner), 'claude');
+    }
+  }
+});
+
+test('DOG-49 direct and fake-TUI outage fixtures agree for every supported shape', () => {
+  const markers = [
+    ['bare', '--outage', ''],
+    ['tool result', '--outage-read', '⎿  '],
+    ['history', '--outage-marker', '⏺ '],
+  ];
+  for (const [name, mode, marker] of markers) {
+    for (let continuationCount = 1; continuationCount <= 4; continuationCount++) {
+      const direct = fakeOutageLines(marker, continuationCount);
+      const fake = runFakeTui(mode, String(continuationCount));
+      assert.deepEqual(fake, direct, `${name}: ${continuationCount}`);
+      for (const platform of ['claude', 'unknown', 'codex']) {
+        const directBanner = detectBanner(direct, platform);
+        const fakeBanner = detectBanner(fake, platform);
+        assert.deepEqual(fakeBanner, directBanner, `${platform}: ${name}: ${continuationCount}`);
+        assert.equal(directBanner?.kind ?? null, platform === 'codex' ? null : 'outage');
+      }
+    }
+  }
+
+  const directAnsi = fakeOutageLines('⏺', 2, { ansi: true });
+  const fakeAnsi = runFakeTui('--outage-ansi', '2');
+  assert.deepEqual(fakeAnsi, directAnsi);
+  for (const platform of ['claude', 'unknown', 'codex']) {
+    const directBanner = detectBanner(directAnsi, platform);
+    assert.deepEqual(detectBanner(fakeAnsi, platform), directBanner, `${platform}: ANSI`);
+    assert.equal(directBanner?.kind ?? null, platform === 'codex' ? null : 'outage');
+  }
+});
+
+test('DOG-49 trailing chrome payload quotation does not shadow a valid outage', () => {
+  const lines = [
+    '─'.repeat(60),
+    `⏺ ${CLAUDE_OUTAGE_PAYLOAD}`,
+    ...CLAUDE_WRAP_CONTINUATIONS.slice(0, 3),
+    '⎿  Tip: inspect API Error: 500 before retrying.',
+    ...CLAUDE_FAKE_FOOTER,
+  ];
+  const fake = runFakeTui('--outage-shadow');
+  assert.deepEqual(fake, lines);
+  for (const fixture of [lines, fake]) {
+    const banner = detectBanner(fixture, 'claude');
+    assert.equal(banner?.kind, 'outage');
+    assert.equal(banner?.matchedLine, `⏺ ${CLAUDE_OUTAGE_PAYLOAD}`);
+  }
+});
+
+test('DOG-49 direct and fake-TUI rejected fixtures agree on their blocker', () => {
+  const fixtures = [
+    {
+      name: 'envelope',
+      mode: '--outage-bad-marker',
+      platform: 'claude',
+      lines: ['─'.repeat(60), `◆ ${CLAUDE_OUTAGE_PAYLOAD}`, ...CLAUDE_FAKE_FOOTER],
+    },
+    {
+      name: 'retry',
+      mode: '--outage-retry',
+      platform: 'claude',
+      lines: ['─'.repeat(60), `⏺ ${CLAUDE_OUTAGE_PAYLOAD}`,
+        CLAUDE_WRAP_CONTINUATIONS[0], 'Retrying in 5s… (attempt 2/10)', ...CLAUDE_FAKE_FOOTER],
+    },
+    {
+      name: 'final-block',
+      mode: '--outage-stale',
+      platform: 'claude',
+      lines: ['─'.repeat(60), `⏺ ${CLAUDE_OUTAGE_PAYLOAD}`,
+        CLAUDE_WRAP_CONTINUATIONS[0], '⏺ The request recovered, so I continued working.', ...CLAUDE_FAKE_FOOTER],
+    },
+    {
+      name: 'envelope',
+      mode: '--outage-prose',
+      platform: 'claude',
+      lines: ['─'.repeat(60), `I saw "⏺ ${CLAUDE_OUTAGE_PAYLOAD}" in quoted prose.`, ...CLAUDE_FAKE_FOOTER],
+    },
+    {
+      name: 'envelope',
+      mode: '--outage-log',
+      platform: 'unknown',
+      lines: ['─'.repeat(60), `2026-09-21T12:00:00Z ⏺ ${CLAUDE_OUTAGE_PAYLOAD}`, ...CLAUDE_FAKE_FOOTER],
+    },
+  ];
+  for (const fixture of fixtures) {
+    const fake = runFakeTui(fixture.mode);
+    assert.deepEqual(fake, fixture.lines, fixture.mode);
+    for (const lines of [fixture.lines, fake]) {
+      assert.equal(detectBanner(lines, fixture.platform), null, fixture.mode);
+      assert.equal(watchdog.classifyOutageNearMiss(lines, fixture.platform), fixture.name, fixture.mode);
     }
   }
 });
@@ -482,9 +608,66 @@ test('class precedence is chronological by last contributing line', () => {
   assert.equal(detectBanner(['Session limit reached: API Error: 529 overloaded_error, try again later', '> '], 'claude').kind, 'limit');
 });
 
-test('hasOutageLine reports a pattern line regardless of platform or trailing prose', () => {
+test('hasOutageLine reports a known payload regardless of envelope or trailing prose', () => {
   assert.equal(hasOutageLine([CLAUDE_529, 'moved on', 'john@mac ~ %']), true);
+  assert.equal(hasOutageLine(['I saw "API Error: 529 Overloaded" in quoted prose.']), true);
+  assert.equal(hasOutageLine(['2026-09-21T12:00:00Z API Error: 500 Internal server error.']), true);
   assert.equal(hasOutageLine(['all good', '> ']), false);
+});
+
+test('DOG-49 outage near-miss classifier returns the exact rejection blocker', () => {
+  assert.equal(typeof watchdog.classifyOutageNearMiss, 'function');
+  if (typeof watchdog.classifyOutageNearMiss !== 'function') return;
+  const cases = [
+    {
+      name: 'unrecognised marker',
+      platform: 'claude',
+      lines: ['◆ API Error: 529 Overloaded', '> '],
+      blocker: 'envelope',
+    },
+    {
+      name: 'fifth continuation line',
+      platform: 'unknown',
+      lines: [`⏺ ${CLAUDE_OUTAGE_PAYLOAD}`, ...CLAUDE_WRAP_CONTINUATIONS,
+        '  a fifth wrapped line is outside the envelope', '> '],
+      blocker: 'envelope',
+    },
+    {
+      name: 'Claude shape on Codex identity',
+      platform: 'codex',
+      lines: [`⏺ ${CLAUDE_OUTAGE_PAYLOAD}`, CLAUDE_WRAP_CONTINUATIONS[0], '> '],
+      blocker: 'identity',
+    },
+    {
+      name: 'active retry',
+      platform: 'claude',
+      lines: [CLAUDE_529, 'Retrying in 5s… (attempt 2/10)', '> '],
+      blocker: 'retry',
+    },
+    {
+      name: 'stale output',
+      platform: 'claude',
+      lines: [CLAUDE_529, 'The request recovered, so I continued working.', '> '],
+      blocker: 'final-block',
+    },
+  ];
+  for (const fixture of cases) {
+    assert.equal(detectBanner(fixture.lines, fixture.platform), null, fixture.name);
+    assert.equal(watchdog.classifyOutageNearMiss(fixture.lines, fixture.platform),
+      fixture.blocker, fixture.name);
+  }
+  assert.equal(watchdog.classifyOutageNearMiss(outageTail(CLAUDE_529), 'claude'), null);
+  assert.equal(watchdog.classifyOutageNearMiss(['all good', '> '], 'claude'), null);
+});
+
+test('DOG-49 unknown inference requires a fully recognised Claude outage envelope', () => {
+  const terminal = { agentIdentity: 'claude-agent-teams' };
+  const lines = ['◆ API Error: 529 Overloaded', '> '];
+  const platform = inferPlatform(terminal);
+  const banner = detectBanner(lines, platform);
+  assert.equal(platform, 'unknown');
+  assert.equal(banner, null);
+  assert.equal(inferPlatform(terminal, banner), 'unknown');
 });
 
 // --- inferPlatform ---
@@ -2178,6 +2361,33 @@ test('debug lines are suppressed unless WATCHDOG_DEBUG is set', () => {
   for (const lvl of ['info', 'warn', 'error']) assert.equal(shouldLog(lvl, {}), true);
 });
 
+test('DOG-49 tick debug log names the near-miss blocker and sanitizes terminal text', async () => {
+  const priorDebug = process.env.WATCHDOG_DEBUG;
+  process.env.WATCHDOG_DEBUG = '1';
+  try {
+    const cases = [
+      ['envelope', T, ['◆ API Error: 529 Overloaded token=fixture-secret-value', '> ']],
+      ['identity', { ...T, agentIdentity: 'codex' }, [CLAUDE_529, '> ']],
+      ['retry', T, [CLAUDE_529, 'Retrying in 5s… (attempt 2/10)', '> ']],
+      ['final-block', T, [CLAUDE_529, 'The request recovered, so I continued working.', '> ']],
+    ];
+    for (const [blocker, terminal, tail] of cases) {
+      const logged = [];
+      const h = harness({ tail, terminals: [terminal] });
+      h.deps.log = (level, message) => logged.push(`${level} ${message}`);
+      await tick({ dryRun: true }, h.deps);
+      const line = logged.find((entry) => entry.includes('outage payload present but not detected'));
+      assert.ok(line, `${blocker}: ${logged.join('\n')}`);
+      assert.match(line, new RegExp(`not detected \\(${blocker}\\)`));
+      assert.doesNotMatch(line, /fixture-secret-value/);
+      if (blocker === 'envelope') assert.match(line, /token=\[redacted\]/);
+    }
+  } finally {
+    if (priorDebug === undefined) delete process.env.WATCHDOG_DEBUG;
+    else process.env.WATCHDOG_DEBUG = priorDebug;
+  }
+});
+
 test('orca(): malformed JSON stdout becomes an unavailable error, not an unhandled throw (DOG-24)', async () => {
   const badExec = async () => ({ stdout: 'not json at all' });
   await assert.rejects(watchdog.orca(['terminal', 'list'], badExec), (e) => {
@@ -2440,16 +2650,16 @@ test('CLI entry runs when invoked through a symlinked path (DOG-6)', async () =>
 });
 
 // --- DOG-37: PROVIDERS registry parity (characterization) ---
-// These lock the registry-DERIVED structures to the known-good literals the
-// scattered per-platform code produced before the refactor. If one fails, the
-// registry refactor changed behaviour for claude/codex/unknown and is wrong.
+// These lock the registry-derived structures to the supported provider set.
 
-test('DOG-37 registry: OUTAGE_PATTERNS deep-equals the prior two-row table', () => {
+test('DOG-37 registry: OUTAGE_PATTERNS derives payload and envelope rows', () => {
   const expected = [
     { id: 'claude-api-error', platforms: ['claude', 'unknown'],
-      re: /^(?:[⎿⏺]\s*)?API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i },
+      re: /API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i,
+      markers: [/^$/, /^⎿\s*$/, /^⏺\s*$/], continuation: { line: /^[ \t]+\S/, maxLines: 4 } },
     { id: 'codex-api-error', platforms: ['codex'],
-      re: /^■\s*(stream disconnected before completion\b|We're currently experiencing high demand\b|Selected model is at capacity\b|exceeded retry limit, last status: 5\d\d\b|Error while reading the server response\b|Connection failed:|unexpected status 5\d\d\b|request timed out\b)/ },
+      re: /(stream disconnected before completion\b|We're currently experiencing high demand\b|Selected model is at capacity\b|exceeded retry limit, last status: 5\d\d\b|Error while reading the server response\b|Connection failed:|unexpected status 5\d\d\b|request timed out\b)/,
+      markers: [/^■\s*$/], continuation: null },
   ];
   const actual = watchdog.OUTAGE_PATTERNS;
   assert.equal(actual.length, expected.length);
@@ -2458,6 +2668,12 @@ test('DOG-37 registry: OUTAGE_PATTERNS deep-equals the prior two-row table', () 
     assert.deepEqual(actual[i].platforms, row.platforms, `row ${i} platforms`);
     assert.equal(actual[i].re.source, row.re.source, `row ${i} re.source`);
     assert.equal(actual[i].re.flags, row.re.flags, `row ${i} re.flags`);
+    assert.deepEqual(actual[i].envelope.markers.map((re) => [re.source, re.flags]),
+      row.markers.map((re) => [re.source, re.flags]), `row ${i} envelope markers`);
+    assert.equal(actual[i].envelope.continuation?.line.source,
+      row.continuation?.line.source, `row ${i} continuation line`);
+    assert.equal(actual[i].envelope.continuation?.maxLines,
+      row.continuation?.maxLines, `row ${i} continuation maxLines`);
   });
   // hasOutageLine (which consumes OUTAGE_PATTERNS) still matches both shapes.
   assert.ok(hasOutageLine(['API Error: 529 overloaded_error']));
@@ -2519,6 +2735,12 @@ test('DOG-38 registry: every provider has the complete validated shape and a uni
       assert.equal(typeof row.id, 'string');
       assert.ok(row.re instanceof RegExp);
       assert.equal(typeof row.alsoUnknown, 'boolean');
+      assert.ok(Array.isArray(row.envelope.markers));
+      assert.ok(row.envelope.markers.length > 0);
+      row.envelope.markers.forEach((re) => assert.ok(re instanceof RegExp));
+      assert.ok(row.envelope.continuation === null
+        || (row.envelope.continuation.line instanceof RegExp
+          && Number.isInteger(row.envelope.continuation.maxLines)));
     });
     assert.ok(Array.isArray(provider.fingerprint));
     provider.fingerprint.forEach((re) => assert.ok(re instanceof RegExp));
@@ -2540,7 +2762,9 @@ test('DOG-38 registry: providers and all structural nested values are frozen and
   for (const provider of watchdog.PROVIDERS) {
     for (const value of [
       provider, provider.agentIdentity, provider.kinds, provider.limit, provider.outage,
-      ...provider.outage, provider.fingerprint, provider.chrome, provider.chrome.trailing, provider.chrome.draft,
+      ...provider.outage, ...provider.outage.flatMap((row) => [row.envelope, row.envelope.markers,
+        ...(row.envelope.continuation === null ? [] : [row.envelope.continuation])]),
+      provider.fingerprint, provider.chrome, provider.chrome.trailing, provider.chrome.draft,
       ...(provider.chrome.footerStart === null ? [] : [provider.chrome.footerStart]),
       provider.status,
     ]) assert.ok(Object.isFrozen(value), `${provider.id} nested value must be frozen`);
@@ -2561,7 +2785,8 @@ test('DOG-38 registry: defineProviders rejects malformed entries and duplicate i
     agentIdentity: ['test'],
     kinds: { limit: true, outage: true, limitOpen: false },
     limit: { rule: 'generic' },
-    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false }],
+    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false,
+      envelope: { markers: [/^$/], continuation: null } }],
     status: { kind: 'statuspage', url: 'https://status.example.test/api/v2/status.json' },
     ...overrides,
   });
@@ -2575,6 +2800,21 @@ test('DOG-38 registry: defineProviders rejects malformed entries and duplicate i
   assert.throws(() => watchdog.defineProviders([validProvider({
     outage: [{ id: 'test-error', re: 'not a regex', alsoUnknown: false }],
   })]), { message: 'Provider test: outage[0].re must be a RegExp' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false, envelope: { markers: [] } }],
+  })]), { message: 'Provider test: outage[0].envelope.markers must be a non-empty array' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false,
+      envelope: { markers: [''], continuation: null } }],
+  })]), { message: 'Provider test: outage[0].envelope.markers[0] must be a RegExp' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false,
+      envelope: { markers: [/^$/], continuation: { line: 'indent', maxLines: 4 } } }],
+  })]), { message: 'Provider test: outage[0].envelope.continuation.line must be a RegExp' });
+  assert.throws(() => watchdog.defineProviders([validProvider({
+    outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false,
+      envelope: { markers: [/^$/], continuation: { line: /^ /, maxLines: -1 } } }],
+  })]), { message: 'Provider test: outage[0].envelope.continuation.maxLines must be a non-negative integer' });
   assert.throws(() => watchdog.defineProviders([validProvider({
     chrome: { trailing: [], draft: ['not a regex'] },
   })]), { message: 'Provider test: chrome.draft[0] must be a RegExp' });

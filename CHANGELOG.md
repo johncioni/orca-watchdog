@@ -4,6 +4,10 @@ All notable changes to Orca Watchdog are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Declare outage markers and bounded wrapping separately from semantic payloads, with sanitized blocker diagnostics for rejected near misses. (DOG-49)
+
 ### Fixed
 
 - Detect Claude API outages behind the `⏺` history marker, including bounded wrapped continuation text. (DOG-48)

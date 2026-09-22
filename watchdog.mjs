@@ -49,8 +49,8 @@ const KINDS = Object.keys(SCHEDULE);
 //   kinds           — which detections apply (limit / outage / limitOpen).
 //   limit.rule      — 'generic' (LIMIT_RE/REACHED_RE/RESET_RE) or 'codex' (the
 //                     bespoke multi-line CODEX_* parser); kept deliberately distinct.
-//   outage[]        — TUI outage shapes; alsoUnknown also applies the row to the
-//                     'unknown' identity (only Claude's does, as before).
+//   outage[]        — outage payloads plus their provider-owned TUI envelopes;
+//                     alsoUnknown applies a row to 'unknown' identities.
 //   fingerprint[]   — window regexes for identity routing.
 //   chrome.trailing — extra per-provider trailing-chrome lines.
 //   chrome.draft    — extra per-provider occupied-input lines.
@@ -87,6 +87,21 @@ export function defineProviders(entries) {
       if (typeof row?.id !== 'string') invalid(`outage[${index}].id`, 'must be a string');
       if (!(row.re instanceof RegExp)) invalid(`outage[${index}].re`, 'must be a RegExp');
       if (typeof row.alsoUnknown !== 'boolean') invalid(`outage[${index}].alsoUnknown`, 'must be a boolean');
+      if (!Array.isArray(row.envelope?.markers) || row.envelope.markers.length === 0) {
+        invalid(`outage[${index}].envelope.markers`, 'must be a non-empty array');
+      }
+      row.envelope.markers.forEach((re, markerIndex) => {
+        if (!(re instanceof RegExp)) invalid(`outage[${index}].envelope.markers[${markerIndex}]`, 'must be a RegExp');
+      });
+      const continuation = row.envelope.continuation ?? null;
+      if (continuation !== null) {
+        if (!(continuation.line instanceof RegExp)) {
+          invalid(`outage[${index}].envelope.continuation.line`, 'must be a RegExp');
+        }
+        if (!Number.isInteger(continuation.maxLines) || continuation.maxLines < 0) {
+          invalid(`outage[${index}].envelope.continuation.maxLines`, 'must be a non-negative integer');
+        }
+      }
     });
 
     const fingerprint = entry.fingerprint ?? [];
@@ -127,7 +142,9 @@ export function defineProviders(entries) {
       agentIdentity: [...entry.agentIdentity],
       kinds: { ...entry.kinds },
       limit: { ...entry.limit },
-      outage: outage.map((row) => ({ ...row })),
+      outage: outage.map((row) => ({ ...row, envelope: { ...row.envelope,
+        markers: [...row.envelope.markers], continuation: row.envelope.continuation == null
+          ? null : { ...row.envelope.continuation } } })),
       fingerprint: [...fingerprint],
       chrome: { ...chrome, trailing: [...trailing], draft: [...draft],
         footerStart: footerStart === null ? null : { ...footerStart } },
@@ -144,9 +161,14 @@ export const PROVIDERS = defineProviders([
     kinds: { limit: true, outage: true, limitOpen: false },
     limit: { rule: 'generic' },
     outage: [
-      // Claude Code history markers "⏺" and "⎿", or the same API error as a bare line.
+      // The semantic allowlist sees payload only. Exact Claude history markers
+      // and bounded physical-line wrapping belong to the TUI envelope.
       { id: 'claude-api-error', alsoUnknown: true,
-        re: /^(?:[⎿⏺]\s*)?API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i },
+        re: /API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i,
+        envelope: {
+          markers: [/^$/, /^⎿\s*$/, /^⏺\s*$/],
+          continuation: { line: /^[ \t]+\S/, maxLines: 4 },
+        } },
     ],
     fingerprint: [],
     chrome: {
@@ -163,11 +185,11 @@ export const PROVIDERS = defineProviders([
     kinds: { limit: true, outage: true, limitOpen: true },
     limit: { rule: 'codex' },
     outage: [
-      // Codex TUI history marker "■" (a U+200A hair space may follow) + one of its
-      // fixed error texts (codex-rs/protocol/src/error.rs). 429 is the rate-limit
-      // path and deliberately not listed.
+      // Source-verified Codex error payloads stay distinct from the required
+      // "■" history marker; 429 deliberately remains on the limit path.
       { id: 'codex-api-error', alsoUnknown: false,
-        re: /^■\s*(stream disconnected before completion\b|We're currently experiencing high demand\b|Selected model is at capacity\b|exceeded retry limit, last status: 5\d\d\b|Error while reading the server response\b|Connection failed:|unexpected status 5\d\d\b|request timed out\b)/ },
+        re: /(stream disconnected before completion\b|We're currently experiencing high demand\b|Selected model is at capacity\b|exceeded retry limit, last status: 5\d\d\b|Error while reading the server response\b|Connection failed:|unexpected status 5\d\d\b|request timed out\b)/,
+        envelope: { markers: [/^■\s*$/], continuation: null } },
     ],
     fingerprint: [],
     chrome: { trailing: [] },
@@ -254,9 +276,10 @@ export function sanitize(text, limit = 200) {
 // Outage banners are platform-owned TUI shapes; there is deliberately no generic
 // rule. Derived from PROVIDERS (DOG-37): one row per provider outage shape, with
 // alsoUnknown extending the row to the 'unknown' identity. `platforms` still gates
-// which terminal identities a row applies to. Deep-equals the prior literal table.
+// which terminal identities a row applies to; envelope owns markers and wrapping.
 export const OUTAGE_PATTERNS = PROVIDERS.flatMap((p) =>
-  p.outage.map((o) => ({ id: o.id, re: o.re, platforms: o.alsoUnknown ? [p.id, 'unknown'] : [p.id] })));
+  p.outage.map((o) => ({ id: o.id, re: o.re, envelope: o.envelope,
+    platforms: o.alsoUnknown ? [p.id, 'unknown'] : [p.id] })));
 const RETRY_RE = /retrying in \d|attempt \d+\s*(\/|of)\s*\d+|Reconnecting\.\.\. (\d+\/\d+|waiting for network)|esc to interrupt/i;
 // Lines allowed AFTER the error for it to count as the final, stalled banner.
 const CHROME_RES = [
@@ -315,9 +338,92 @@ export function readBudgetExceeded(startedAt, now) {
 const WINDOW_LINE_MAX = 2000;
 const toWindow = (lines) => lines.slice(-TAIL_LINES).map((l) => stripAnsi(l).trim().slice(0, WINDOW_LINE_MAX));
 
+const execPattern = (re, text) => {
+  re.lastIndex = 0;
+  return re.exec(text);
+};
+const testPattern = (re, text) => execPattern(re, text) !== null;
+const outageLineMatch = (pattern, line) => {
+  const payload = execPattern(pattern.re, line);
+  if (payload === null) return null;
+  const prefix = line.slice(0, payload.index);
+  const marker = pattern.envelope.markers.find((re) => testPattern(re, prefix)) ?? null;
+  return { marker };
+};
+
+const scanOutage = (sourceWindow, window, platform, platformFooterStart) => {
+  let blocked = null;
+  // The payload closest to the bottom wins as the most recent near miss;
+  // equal indices go to the later outage pattern.
+  const recordBlocker = (index, blocker) => {
+    if (blocked === null || index >= blocked.index) blocked = { index, blocker };
+  };
+
+  for (const pattern of OUTAGE_PATTERNS) {
+    let payloadCandidate = null;
+    let bannerCandidate = null;
+    window.forEach((line, index) => {
+      const match = outageLineMatch(pattern, line);
+      if (match === null) return;
+      payloadCandidate = { index, ...match };
+      if (match.marker !== null) bannerCandidate = { index, ...match };
+    });
+    if (payloadCandidate === null) continue;
+    if (!pattern.platforms.includes(platform)) {
+      recordBlocker(payloadCandidate.index, 'identity');
+      continue;
+    }
+    if (bannerCandidate === null) {
+      recordBlocker(payloadCandidate.index, 'envelope');
+      continue;
+    }
+    const e = bannerCandidate.index;
+    if (lastIndex(window, (line) => RETRY_RE.test(line)) >= e) {
+      recordBlocker(e, 'retry');
+      continue;
+    }
+
+    const outagePlatform = pattern.platforms[0];
+    const outageFooterStart = outagePlatform === platform
+      ? platformFooterStart : footerStartFor(outagePlatform, window);
+    let trailingStart = e + 1;
+    const continuation = pattern.envelope.continuation;
+    if (continuation !== null) {
+      let continuations = 0;
+      while (continuations < continuation.maxLines && trailingStart < window.length
+        && !isTrailingChromeAt(outagePlatform, window, trailingStart, outageFooterStart)
+        && testPattern(continuation.line, sourceWindow[trailingStart])) {
+        trailingStart++;
+        continuations++;
+      }
+      if (trailingStart < window.length
+        && !isTrailingChromeAt(outagePlatform, window, trailingStart, outageFooterStart)
+        && testPattern(continuation.line, sourceWindow[trailingStart])) {
+        recordBlocker(e, 'envelope');
+        continue;
+      }
+    }
+    if (!window.slice(trailingStart).every((_line, offset) =>
+      isTrailingChromeAt(outagePlatform, window, trailingStart + offset, outageFooterStart))) {
+      recordBlocker(e, 'final-block');
+      continue;
+    }
+    return { banner: { kind: 'outage', bannerText: sanitize(window[e], 200),
+      matchedLine: window[e], patternId: pattern.id, index: e }, blocker: null };
+  }
+  return { banner: null, blocker: blocked?.blocker ?? null };
+};
+
 export function hasOutageLine(lines) {
   const window = toWindow(lines);
-  return OUTAGE_PATTERNS.some((p) => window.some((l) => p.re.test(l)));
+  return OUTAGE_PATTERNS.some((pattern) => window.some((line) => outageLineMatch(pattern, line) !== null));
+}
+
+export function classifyOutageNearMiss(lines, platform = 'unknown') {
+  const sourceWindow = lines.slice(-TAIL_LINES).map((line) => stripAnsi(line).slice(0, WINDOW_LINE_MAX));
+  const window = toWindow(lines);
+  const result = scanOutage(sourceWindow, window, platform, footerStartFor(platform, window));
+  return result.banner === null ? result.blocker : null;
 }
 
 // Named Codex limit forms, bounded to three physical lines below. Only the
@@ -387,33 +493,7 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   if (codexLimit) limit = codexLimit;
 
   // --- outage rule ---
-  let outage = null;
-  for (const p of OUTAGE_PATTERNS) {
-    if (!p.platforms.includes(platform)) continue;
-    const e = lastIndex(window, (l) => p.re.test(l));
-    if (e < 0) continue;
-    if (lastIndex(window, (l) => RETRY_RE.test(l)) >= e) continue;   // still retrying
-    const outagePlatform = p.platforms[0];
-    const outageFooterStart = outagePlatform === platform
-      ? platformFooterStart : footerStartFor(outagePlatform, window);
-    let trailingStart = e + 1;
-    // The capture has three physical continuation lines; one extra line allows
-    // terminal-width variance. Once chrome begins, ordinary output stays stale.
-    if (p.id === 'claude-api-error' && /^⏺/.test(window[e])) {
-      let continuations = 0;
-      while (continuations < 4 && trailingStart < window.length
-        && !isTrailingChromeAt(outagePlatform, window, trailingStart, outageFooterStart)
-        && /^[ \t]+\S/.test(sourceWindow[trailingStart])) {
-        trailingStart++;
-        continuations++;
-      }
-    }
-    if (!window.slice(trailingStart).every((_line, offset) =>
-      isTrailingChromeAt(outagePlatform, window, trailingStart + offset, outageFooterStart))) continue; // stale: agent moved on
-    outage = { kind: 'outage', bannerText: sanitize(window[e], 200),
-      matchedLine: window[e], patternId: p.id, index: e };
-    break;
-  }
+  const outage = scanOutage(sourceWindow, window, platform, platformFooterStart).banner;
 
   const pick = (limit && outage) ? (limit.index >= outage.index ? limit : outage) : (limit ?? outage);
   if (!pick) return null;
@@ -991,7 +1071,10 @@ export async function tick({ dryRun }, depsIn = {}) {
         const tail = await readTail(t.handle, deps.orca);
         const banner = detectBanner(tail, inferPlatform(t), deps.now());
         if (!banner && shouldLog('debug') && hasOutageLine(tail)) {
-          log('debug', `outage-pattern line present but not detected (platform gate, retry veto, or final block) on ${t.handle}: ${sanitize(tail.slice(-TAIL_LINES).join(' | '), 600)}`);
+          const blocker = classifyOutageNearMiss(tail, inferPlatform(t));
+          if (blocker !== null) {
+            log('debug', `outage payload present but not detected (${blocker}) on ${t.handle}: ${sanitize(tail.slice(-TAIL_LINES).join(' | '), 600)}`);
+          }
         }
         observations.push({ handle: t.handle, banner, platform: inferPlatform(t, banner), window: tail.slice(-TAIL_LINES).join(' | ') });
       } catch (e) {
