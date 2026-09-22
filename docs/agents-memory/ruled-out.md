@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-22: Any parenthesised slash line as the wrapped zone
+
+The first DOG-50 rule took any `(x/y)` line under any evidence line as the wrapped
+zone, so `(src/foo)` or `(1/2)` under prose extended the banner past the stale guard
+and could turn an old screen into a resume. Now the zone must be valid and the line
+above must end in a clock.
+PR: https://github.com/johncioni/orca-watchdog/pull/54
+
 ## 2026-09-22: Last payload-matching line as the outage candidate
 
 Picking the last line whose payload regex matches, before checking the marker,

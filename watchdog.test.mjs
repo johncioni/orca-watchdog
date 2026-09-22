@@ -278,6 +278,78 @@ const CLAUDE_DOG50_NARROW_BOX = [
   '  2 CLAUDE.md | 1 MCPs | 15 hooks',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
 ];
+const CLAUDE_SESSION_LIMIT_WIDE = [
+  '❯ usage is available again',
+  '  Made 2 scratchpad edits +1450, read 1 file, ran 1 shell command',
+  '  ⎿  Referenced file ../../../../../private/tmp/claude-501/-Users-john-orca-projects-GlamBook/1ebb470b-23e6-4bf0-89a9-ef6ad65ead',
+  '     8c/scratchpad/plan2e/tasks/t03.md',
+  '  ⎿  Referenced file ../../../../../private/tmp/claude-501/-Users-john-orca-projects-GlamBook/1ebb470b-23e6-4bf0-89a9-ef6ad65ead',
+  '     8c/scratchpad/plan2e/tasks/t02.md',
+  '  ⎿  Referenced file ../../../../../private/tmp/claude-501/-Users-john-orca-projects-GlamBook/1ebb470b-23e6-4bf0-89a9-ef6ad65ead',
+  '     8c/scratchpad/plan2e/tasks/t01.md',
+  '  ⎿  Referenced file docs/superpowers/plans/2026-09-21-plan-2e-automation-engine.md',
+  '  ⎿  Read HANDOFF.md (47 lines)',
+  '  ⎿  Skills restored (writing-guidelines, humanizer, superpowers:writing-plans)',
+  '⏺ Writing Task 5 and Task 6 rev-2 files now, then continuing through Task 16 before assembling the plan.',
+  '  Made 2 scratchpad edits +739, read 1 file, ran 3 shell commands',
+  '⏺ Writing Task 7 (stage advance, source-aware finalizeSend) now.',
+  '  Made 4 scratchpad edits +1116 -18, ran 2 shell commands',
+  '⏺ Tasks 3 through 8 are written. Reading the rev-1 Task 9 and 10 sections plus the updateFields and reply anchors next, so Tasks',
+  '  9 and 10 can be written in one pass.',
+  '  Made 2 scratchpad edits +539, ran 4 shell commands',
+  '⏺ Tasks 3 through 10 are written. Reading rev-1 Tasks 11 and 12 next to rework the SLA scan and webhook dedup.',
+  '  Ran 1 shell command',
+  "  ⎿  You've hit your session limit · resets 12:30am (America/New_York)",
+  '     /upgrade to increase your usage limit.',
+  '✻ Baked for 17m 13s · done 9:54 PM',
+  '                                                                                        new task? /clear to save 238.6k tokens',
+  '─'.repeat(128),
+  '❯',
+  '─'.repeat(128),
+  '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e* [+37 -29]) │ floating-wondering-crescent │ ⏱️   4h 52m │ Cost $59.80',
+  '  Context ██░░░░░░░░ 23% │ Usage Weekly ████░░░░░░ 39% (resets in 5d 1h)',
+  '  2 CLAUDE.md | 1 MCPs | 15 hooks',
+  '  ~2026-09-21-plan-2e-automation-engine.md(+37 -29)',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent',
+  '  ⧉  plan-2e-automation-engine',
+];
+const CLAUDE_SESSION_LIMIT_NARROW = [
+  '⏺ Codex accepted the follow-up and is working on the',
+  '  addendum. Waiting for the poll to report the amended',
+  '  commit.',
+  '  Ran 1 shell command',
+  '⏺ Two polls are now watching the worktree (the earlier',
+  '  nine-minute one and this one). Whichever fires first',
+  '  will wake me. Nothing else independent remains until',
+  '  the amended commit exists, since the review brief and',
+  '  worktree captures are already in place.',
+  '✻ Cogitated for 1m 18s · done 9:37 PM',
+  '⏺ Background command "Poll the worktree for the amended',
+  'commit" completed (exit code 0)',
+  '  Read 1 file',
+  '⏺ Codex is still editing (tests modified, no commit',
+  '  yet). The longer poll is still armed and will notify',
+  '  me when HEAD changes. Nothing else to do until then.',
+  '✻ Worked for 13s · done 9:45 PM',
+  "⏺ Background command \"Wait until the implementer's HEAD",
+  'changes" completed (exit code 0)',
+  "  ⎿  You've hit your session limit · resets 12:30am",
+  '     (America/New_York)',
+  '     /upgrade to increase your usage limit.',
+  '✻ Cogitated for 0s · done 9:55 PM',
+  '               new task? /clear to save 135.7k tokens',
+  '─'.repeat(55),
+  '❯',
+  '─'.repeat(55),
+  '  [Fable 5.1 ◔ medium] │ orca-limit-watchdog git:(ma…',
+  '  Context █░░░░░░░░░ 14% │ Usage Weekly ████░░░░░░ 3…',
+  '  2 CLAUDE.md | 1 MCPs | 15 hooks',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
+];
+const CLAUDE_SESSION_LIMIT_CAPTURES = [
+  ['wide', CLAUDE_SESSION_LIMIT_WIDE],
+  ['narrow', CLAUDE_SESSION_LIMIT_NARROW],
+];
 const CLAUDE_ERROR_BLOCK = CLAUDE_500_CAPTURE.slice(0, 5);
 const CLAUDE_NARROW_FABLE_BOX = CLAUDE_500_CAPTURE.slice(24);
 const CLAUDE_500_STALLED = [...CLAUDE_ERROR_BLOCK, ...CLAUDE_NARROW_FABLE_BOX];
@@ -315,7 +387,7 @@ test('detects observed ⏺ 500/529 outages with bounded wrapped continuations fo
     for (const line of fixtures) {
       const terminal = { agentIdentity };
       const initialPlatform = inferPlatform(terminal);
-      assert.equal(initialPlatform, agentIdentity === 'claude' ? 'claude' : 'unknown');
+      assert.equal(initialPlatform, 'claude');
       const banner = detectBanner([line, ...CLAUDE_CONTINUATIONS, '', '> ', FOOTER, '? for shortcuts'], initialPlatform);
       assert.ok(banner, `${agentIdentity}: ${line}`);
       assert.equal(banner.kind, 'outage');
@@ -474,6 +546,75 @@ test('DOG-50 session-limit wording remains the matched line above Claude footer 
   assert.ok(banner);
   assert.equal(banner.matchedLine, bannerLine);
   assert.equal(banner.bannerText, bannerLine);
+});
+
+test('DOG-50 Claude /clear token hint is trailing chrome after a session-limit banner', () => {
+  const bannerLine = "You've hit your session limit · resets 12:30am (America/New_York)";
+  const banner = detectBanner([bannerLine, '✻ Baked for 17m 13s · done 9:54 PM',
+    'new task? /clear to save 238.6k tokens',
+    ...CLAUDE_DOG50_WIDE_BOX], 'claude', new Date('2026-09-22T21:54:00'));
+  assert.ok(banner);
+  assert.equal(banner.matchedLine, bannerLine);
+  assert.equal(banner.bannerText, bannerLine);
+});
+
+test('DOG-50 verbatim Claude session-limit captures detect and resolve reset time for both identities', () => {
+  const now = new Date('2026-09-22T01:55:00Z');
+  for (const [name, tail] of CLAUDE_SESSION_LIMIT_CAPTURES) {
+    for (const agentIdentity of ['claude', 'claude-agent-teams']) {
+      const platform = inferPlatform({ agentIdentity });
+      const banner = detectBanner(tail, platform, now);
+      assert.equal(platform, 'claude', `${name}/${agentIdentity}: platform`);
+      assert.equal(banner?.kind, 'limit', `${name}/${agentIdentity}: kind`);
+      assert.match(banner?.matchedLine ?? '', /(\/upgrade|resets)/, `${name}/${agentIdentity}: matched line`);
+      assert.match(banner?.bannerText ?? '', /\(America\/New_York\)/, `${name}/${agentIdentity}: zone evidence`);
+      const event = newEvent({ handle: `term_${name}`, platform, banner }, now);
+      assert.equal(event.resetAt, '2026-09-22T04:30:00.000Z', `${name}/${agentIdentity}: reset`);
+      assert.equal(isShellPrompt(tail, agentIdentity), false, `${name}/${agentIdentity}: shell prompt`);
+      assert.equal(isInputOccupied(tail, platform), false, `${name}/${agentIdentity}: occupied`);
+    }
+  }
+});
+
+test('DOG-50 Claude session-limit captures remain stale when ordinary output follows the banner', () => {
+  for (const [name, tail] of CLAUDE_SESSION_LIMIT_CAPTURES) {
+    const turnSummary = tail.findIndex((line, index) => index > tail.findIndex((item) => /session limit/.test(item))
+      && /^✻ /.test(line));
+    assert.ok(turnSummary > 0, `${name}: turn summary`);
+    for (const output of ['⏺ I continued with the task.', 'I continued with the task.']) {
+      const stale = [...tail.slice(0, turnSummary), output, ...tail.slice(turnSummary)];
+      assert.equal(detectBanner(stale, 'claude'), null, `${name}: ${output}`);
+    }
+  }
+});
+
+test('DOG-50 Claude usage footer alone is not a limit banner', () => {
+  for (const [name, tail] of CLAUDE_SESSION_LIMIT_CAPTURES) {
+    const footerStart = tail.findIndex((line, index) => /^─+$/.test(line) && tail[index + 1]?.trim() === '❯');
+    assert.ok(footerStart > 0, `${name}: footer`);
+    assert.equal(detectBanner(tail.slice(footerStart), 'claude'), null, name);
+  }
+});
+
+test('DOG-50 wrapped zone evidence requires a real IANA zone directly below a reset clock', () => {
+  const limit = 'I hit the session limit earlier; it resets at 3pm.';
+  for (const line of ['(src/foo)', '(1/2)']) {
+    assert.equal(detectBanner([limit, line, ...CLAUDE_DOG50_NARROW_BOX], 'claude'), null, line);
+  }
+  assert.equal(detectBanner([
+    "You've hit your session limit · resets 12:30am",
+    '/upgrade to increase your usage limit.',
+    '(America/New_York)',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ], 'claude'), null, 'a valid zone below a non-clock line must not extend the banner');
+});
+
+test('DOG-50 fake TUI session-limit mode reproduces the wide captured stalled block', () => {
+  const bannerStart = CLAUDE_SESSION_LIMIT_WIDE.findIndex((line) => /session limit/.test(line));
+  const expected = CLAUDE_SESSION_LIMIT_WIDE.slice(bannerStart);
+  const fake = runFakeTui('--session-limit');
+  assert.deepEqual(fake, expected);
+  assert.equal(detectBanner(fake, 'claude', new Date('2026-09-22T01:55:00Z'))?.kind, 'limit');
 });
 
 test('the full verbatim resumed captures are a TAIL_LINES truncation guard (DOG-48 review F3)', () => {
@@ -661,13 +802,23 @@ test('DOG-49 outage near-miss classifier returns the exact rejection blocker', (
 });
 
 test('DOG-49 unknown inference requires a fully recognised Claude outage envelope', () => {
-  const terminal = { agentIdentity: 'claude-agent-teams' };
+  const terminal = {};
   const lines = ['◆ API Error: 529 Overloaded', '> '];
   const platform = inferPlatform(terminal);
   const banner = detectBanner(lines, platform);
   assert.equal(platform, 'unknown');
   assert.equal(banner, null);
   assert.equal(inferPlatform(terminal, banner), 'unknown');
+});
+
+test('DOG-50 maps the Claude team identity before banner inference', () => {
+  const terminal = { agentIdentity: 'claude-agent-teams' };
+  const lines = ['◆ API Error: 529 Overloaded', '> '];
+  const platform = inferPlatform(terminal);
+  const banner = detectBanner(lines, platform);
+  assert.equal(platform, 'claude');
+  assert.equal(banner, null);
+  assert.equal(inferPlatform(terminal, banner), 'claude');
 });
 
 // --- inferPlatform ---
@@ -785,6 +936,54 @@ test('zone-suffixed reset clocks are independent of the machine TZ (DOG-41)', ()
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, '2026-09-16T07:30:00.000Z', tz);
   }
+});
+
+test('IANA reset clocks resolve in the named zone across DST and roll in that zone (DOG-50)', () => {
+  const now = new Date('2026-03-07T14:00:00Z'); // 6:00 AM PST; 3:30 AM is beyond the two-hour grace
+  assert.equal(
+    parseResetTime('resets 3:30am (America/Los_Angeles)', now).toISOString(),
+    '2026-03-08T10:30:00.000Z' // next 3:30 AM is after the spring-forward change
+  );
+});
+
+test('an invalid IANA reset zone falls back to the current local-time behavior (DOG-50)', () => {
+  const now = new Date('2026-03-07T12:00:00Z');
+  const local = parseResetTime('resets 3:30am', now);
+  assert.equal(parseResetTime('resets 3:30am (Mars/Olympus_Mons)', now).toISOString(), local.toISOString());
+});
+
+test('an IANA reset zone after a separator must occupy the whole segment (DOG-50 review F2)', () => {
+  const now = new Date('2026-09-16T12:00:00Z');
+  const local = parseResetTime('resets 3am', now);
+  assert.equal(
+    parseResetTime('resets 3am | (Asia/Tokyo) servers available again soon', now).toISOString(),
+    local.toISOString()
+  );
+  const banner = detectBanner([
+    'Claude usage limit reached. Your limit will reset at 3am',
+    '⏺ note',
+    '(Asia/Tokyo) servers available again soon',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ], 'claude', now);
+  assert.ok(banner);
+  assert.equal(newEvent({ handle: 'term_zone_suffix', platform: 'claude', banner }, now).resetAt,
+    local.toISOString());
+});
+
+test('IANA reset clocks resolve DST gaps forward with the pre-transition offset (DOG-50 review F3)', () => {
+  for (const [text, now, expected] of [
+    ['resets 2:30am (America/New_York)', '2026-03-07T15:00:00Z', '2026-03-08T07:30:00.000Z'],
+    ['resets 2:30am (Australia/Adelaide)', '2026-10-03T04:00:00Z', '2026-10-03T17:00:00.000Z'],
+  ]) {
+    assert.equal(parseResetTime(text, new Date(now)).toISOString(), expected, text);
+  }
+});
+
+test('IANA reset clocks choose the later overlap occurrence when the earlier one has passed (DOG-50 review F3)', () => {
+  assert.equal(
+    parseResetTime('resets 1:30am (America/New_York)', new Date('2026-11-01T06:10:00Z')).toISOString(),
+    '2026-11-01T06:30:00.000Z'
+  );
 });
 
 test('unknown or nonadjacent zone abbreviations leave the local clock unchanged (DOG-41)', () => {
@@ -1353,6 +1552,7 @@ test('isShellPrompt recognises shell prompts and treats bare Claude >/❯ as inp
   assert.equal(isShellPrompt(['API Error: 529', '❯']), true);
   assert.equal(isShellPrompt(['API Error: 529', '❯'], 'codex'), true);
   assert.equal(isShellPrompt(['API Error: 529', '❯'], 'claude'), false);
+  assert.equal(isShellPrompt(['API Error: 529', '❯'], 'claude-agent-teams'), false);
   assert.equal(isShellPrompt(['API Error: 529', '? for shortcuts']), false);
   assert.equal(isShellPrompt([]), false);
 });

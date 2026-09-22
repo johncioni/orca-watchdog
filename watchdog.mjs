@@ -157,7 +157,7 @@ export function defineProviders(entries) {
 export const PROVIDERS = defineProviders([
   {
     id: 'claude',
-    agentIdentity: ['claude'],
+    agentIdentity: ['claude', 'claude-agent-teams'],
     kinds: { limit: true, outage: true, limitOpen: false },
     limit: { rule: 'generic' },
     outage: [
@@ -174,6 +174,7 @@ export const PROVIDERS = defineProviders([
     chrome: {
       trailing: [
         /^✻ [A-Za-z]+ for \d+(?:h|m|s)(?: \d+(?:h|m|s)){0,2} · done \d{1,2}:\d{2} [AP]M$/,
+        /^new task\? \/clear to save \d+(?:\.\d+)?k tokens$/,
       ],
       footerStart: { prompt: /^❯$/, rule: /^─+$/ },
     },
@@ -243,6 +244,8 @@ const VETO_RE = /approaching[^\n]*limit/i;
 // is on screen in every Claude terminal and always satisfies RESET_RE. It is
 // chrome, never evidence: dropped before the limit rule runs.
 const FOOTER_RE = /│\s*Usage\s/;
+const IANA_ZONE_LINE_RE = /^\(([^()]*\/[^()]*)\)$/;
+const CLOCK_AT_END_RE = /(?:\b\d{1,2}(?::[0-5]\d)?\s*[ap]\.?m\.?|\b(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
 
 // CSI (ESC [ … final), OSC (ESC ] … BEL|ST), charset selects (ESC ( B),
 // two-byte escapes (ESC = > 7 8 c D E H M N O Z), and stray C0/DEL bytes.
@@ -474,8 +477,15 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   // "usage limit reached"; prose and logs scatter the words across lines.
   const reachedLine = (l) => LIMIT_RE.test(l) && REACHED_RE.test(l);
   if (c < 0 && kept.some(reachedLine) && RESET_RE.test(text)) {
-    const isRelevant = (l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l)
+    const isCoreEvidence = (l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l)
       && (LIMIT_RE.test(l) || RESET_RE.test(l));
+    const isRelevant = (l, i) => {
+      if (isCoreEvidence(l, i)) return true;
+      const zone = l.match(IANA_ZONE_LINE_RE)?.[1];
+      const previous = window[i - 1] ?? '';
+      return beforeInputBox(l, i) && zone !== undefined && ianaFormatter(zone) !== null
+        && CLOCK_AT_END_RE.test(previous) && isCoreEvidence(previous, i - 1);
+    };
     const l = lastIndex(window, isRelevant);
     // Same final-block guard the Codex limit and outage rules use: a banner the
     // agent already scrolled past (ordinary output between it and an idle empty
@@ -598,15 +608,23 @@ function clockZoneOffset(text, end) {
   return zone ? CLOCK_ZONE_OFFSETS[zone[1].toUpperCase()] : undefined;
 }
 
+function clockTimeZone(text, end) {
+  if (text[end] === '.') end++;
+  const zone = text.slice(end).match(/^\s*(?:\(([^()]*\/[^()]*)\)|\|\s*\(([^()]*\/[^()]*)\)\s*(?=\||$))/);
+  return zone?.[1] ?? zone?.[2];
+}
+
 // Reads a clock time ("3pm", "3:30 p.m.", "14:00") out of text. Returns
-// { h, m, offsetMin? } or null.
+// { h, m, offsetMin?, timeZone? } or null.
 function parseClock(text) {
   const t12 = text.match(/\b(\d{1,2})(?::([0-5]\d))?\s*([ap])\.?m\.?\b/i);
   if (t12) return { h: Number(t12[1]) % 12 + (t12[3].toLowerCase() === 'p' ? 12 : 0), m: Number(t12[2] || 0),
-    offsetMin: clockZoneOffset(text, t12.index + t12[0].length) };
+    offsetMin: clockZoneOffset(text, t12.index + t12[0].length),
+    timeZone: clockTimeZone(text, t12.index + t12[0].length) };
   const t24 = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
   if (t24) return { h: Number(t24[1]), m: Number(t24[2]),
-    offsetMin: clockZoneOffset(text, t24.index + t24[0].length) };
+    offsetMin: clockZoneOffset(text, t24.index + t24[0].length),
+    timeZone: clockTimeZone(text, t24.index + t24[0].length) };
   return null;
 }
 
@@ -619,6 +637,70 @@ function zonedClockToDate(h, m, offsetMin, now, monthDay = null) {
   if (candidate <= now && now - candidate > GRACE_PAST_MS && !monthDay?.year) {
     if (monthDay) candidate.setUTCFullYear(candidate.getUTCFullYear() + 1);
     else candidate.setUTCDate(candidate.getUTCDate() + 1);
+  }
+  return candidate;
+}
+
+const IANA_FORMATTERS = new Map();
+
+function ianaFormatter(timeZone) {
+  if (IANA_FORMATTERS.has(timeZone)) return IANA_FORMATTERS.get(timeZone);
+  let formatter;
+  try {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone, calendar: 'iso8601', numberingSystem: 'latn', hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+  } catch { formatter = null; }
+  IANA_FORMATTERS.set(timeZone, formatter);
+  return formatter;
+}
+
+function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
+  const formatter = ianaFormatter(timeZone);
+  if (formatter === null) return null;
+
+  const partsFor = (date) => Object.fromEntries(formatter.formatToParts(date)
+    .filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+  const instantFor = (year, month, day) => {
+    const desired = Date.UTC(year, month - 1, day, h, m);
+    const offsetAt = (instant) => {
+      const parts = partsFor(new Date(instant));
+      return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute) - instant;
+    };
+    const dayMs = 24 * 60 * MIN;
+    const offsets = new Set([
+      offsetAt(desired - dayMs),
+      offsetAt(desired),
+      offsetAt(desired + dayMs),
+    ]);
+    const matches = [...offsets].map((offset) => desired - offset).filter((instant) => {
+      const parts = partsFor(new Date(instant));
+      return parts.year === year && parts.month === month && parts.day === day
+        && parts.hour === h && parts.minute === m;
+    }).sort((a, b) => a - b);
+    if (matches.length > 0) {
+      const instant = matches.length > 1 && matches[0] <= now.getTime()
+        ? matches[matches.length - 1] : matches[0];
+      return new Date(instant);
+    }
+    // A nonexistent wall time is moved forward by the size of the DST gap,
+    // matching Temporal's "compatible" disambiguation.
+    return new Date(desired - offsetAt(desired - dayMs));
+  };
+
+  const zonedNow = partsFor(now);
+  let year = monthDay?.year ?? zonedNow.year;
+  let month = (monthDay?.month ?? zonedNow.month - 1) + 1;
+  let day = monthDay?.day ?? zonedNow.day;
+  let candidate = instantFor(year, month, day);
+  if (candidate <= now && now - candidate > GRACE_PAST_MS && !monthDay?.year) {
+    if (monthDay) year++;
+    else {
+      const next = new Date(Date.UTC(year, month - 1, day + 1));
+      year = next.getUTCFullYear(); month = next.getUTCMonth() + 1; day = next.getUTCDate();
+    }
+    candidate = instantFor(year, month, day);
   }
   return candidate;
 }
@@ -651,6 +733,11 @@ export function parseResetTime(text, now) {
     const month = MONTHS.indexOf(md[1].slice(0, 3).toLowerCase());
     if (clock?.offsetMin !== undefined) return zonedClockToDate(clock.h, clock.m, clock.offsetMin, now,
       { month, day: Number(md[2]), year: md[3] ? Number(md[3]) : undefined });
+    if (clock?.timeZone !== undefined) {
+      const zoned = ianaClockToDate(clock.h, clock.m, clock.timeZone, now,
+        { month, day: Number(md[2]), year: md[3] ? Number(md[3]) : undefined });
+      if (zoned !== null) return zoned;
+    }
     const candidate = new Date(now);
     if (md[3]) candidate.setFullYear(Number(md[3]), month, Number(md[2]));
     else candidate.setMonth(month, Number(md[2]));
@@ -661,6 +748,10 @@ export function parseResetTime(text, now) {
 
   if (!clock) return null;
   if (clock.offsetMin !== undefined) return zonedClockToDate(clock.h, clock.m, clock.offsetMin, now);
+  if (clock.timeZone !== undefined) {
+    const zoned = ianaClockToDate(clock.h, clock.m, clock.timeZone, now);
+    if (zoned !== null) return zoned;
+  }
   const candidate = new Date(now);
   candidate.setHours(clock.h, clock.m, 0, 0);
   if (candidate <= now && now - candidate > GRACE_PAST_MS) {
@@ -724,11 +815,11 @@ export function reconcile(state, observations, now, liveHandles = null, newEpiso
 const SHELL_PROMPT_RE = /[$%#❯➜λ❱>]$/;
 // True when the last non-empty line of a tail is a shell prompt, i.e. the agent
 // has exited and a send would land in the shell (spec §6.4). Bare ">" and "❯"
-// are Claude Code empty input boxes only with independent evidence (agentIdentity).
+// are Claude Code empty input boxes only with independent provider evidence.
 export function isShellPrompt(tail, agentIdentity) {
   const last = tail.map((l) => stripAnsi(l).trim()).filter(Boolean).at(-1);
   if (last === undefined) return false;
-  if (last === '>' || last === '❯') return agentIdentity !== 'claude';
+  if (last === '>' || last === '❯') return inferPlatform({ agentIdentity }) !== 'claude';
   return SHELL_PROMPT_RE.test(last);
 }
 
