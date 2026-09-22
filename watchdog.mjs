@@ -247,7 +247,7 @@ const VETO_RE = /approaching[^\n]*limit/i;
 // is on screen in every Claude terminal and always satisfies RESET_RE. It is
 // chrome, never evidence: dropped before the limit rule runs.
 const FOOTER_RE = /│\s*Usage\s/;
-const IANA_ZONE_LINE_RE = /^\(([^()]*\/[^()]*)\)$/;
+export const IANA_ZONE_LINE_RE = /^\(([^()/]*(?:\/[^()/]*)+)\)$/;
 const CLOCK_AT_END_RE = /(?:\b\d{1,2}(?::[0-5]\d)?\s*[ap]\.?m\.?|\b(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
 
 // CSI (ESC [ … final), OSC (ESC ] … BEL|ST), charset selects (ESC ( B),

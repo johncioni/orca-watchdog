@@ -29,6 +29,21 @@ const GEMINI_BANNER = [
 
 // --- detectBanner ---
 
+test('DOG-53: wrapped zone syntax accepts slash-separated names', () => {
+  for (const zoneLine of ['(America/New_York)', '(America/Argentina/Buenos_Aires)', '(src/foo)']) {
+    assert.equal(watchdog.IANA_ZONE_LINE_RE?.exec(zoneLine)?.[1], zoneLine.slice(1, -1));
+  }
+});
+
+test('DOG-53: slash-heavy non-zone lines do not stall limit detection', () => {
+  const pathological = '(' + '/'.repeat(1999);
+  const start = performance.now();
+  const banner = detectBanner([...Array(14).fill(pathological),
+    'Claude usage limit reached. Your limit will reset at 3am.', '> '], 'claude');
+  assert.equal(banner?.kind, 'limit');
+  assert.ok(performance.now() - start < 50, '14 slash-heavy lines should scan in under 50 ms');
+});
+
 test('detects Claude limit banner', () => {
   const b = detectBanner(CLAUDE_BANNER);
   assert.ok(b);
