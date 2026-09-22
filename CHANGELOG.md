@@ -2,6 +2,20 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.4 - 2026-09-22
+
+### Fixed
+
+- **Claude session-limit banners on the current Claude Code screen are detected
+  again.** The `new task? /clear to save …k tokens` hint below the turn summary
+  counts as chrome, and `claude-agent-teams` (Coordinator) terminals are treated
+  as Claude. (DOG-50)
+- **Reset times honour a parenthesised IANA zone** such as
+  `resets 12:30am (America/New_York)`, including when a narrow terminal wraps
+  the zone onto its own line, so the resume lands at the stated instant on any
+  machine. DST gaps resolve forward, and in the repeated autumn hour the resume
+  waits for the later occurrence. An unknown zone falls back to local time. (DOG-50)
+
 ## 1.2.3 - 2026-09-22
 
 ### Changed
