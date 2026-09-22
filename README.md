@@ -236,10 +236,12 @@ The details behind the diagram:
   forms (`in 2h 30m`, `in 3 days`) count from detection. A clock time is read
   as the machine's local time unless a zone abbreviation follows it (`PST`,
   `PDT`, `MST`, `MDT`, `CST`, `CDT`, `EST`, `EDT`, `UTC`, `GMT`, `Z`), which is
-  taken at its fixed offset with no daylight-saving inference. Normally one send
-  per event, with up to two retries 30 minutes apart before it gives up loudly in
-  the log. If the banner is still on screen but its reset time moves materially
-  later, the watchdog honours the new time and keeps waiting.
+  taken at its fixed offset with no daylight-saving inference. An IANA zone in
+  parentheses after the clock, such as `12:30am (America/New_York)`, uses that
+  zone's daylight-saving rules. An invalid IANA zone falls back to local time.
+  Normally one send per event, with up to two retries 30 minutes apart before it
+  gives up loudly in the log. If the banner is still on screen but its reset time
+  moves materially later, the watchdog honours the new time and keeps waiting.
 - **API outage.** Waits 10 minutes, then before each send re-checks the provider's
   status feed. A `major`/`critical` Statuspage indicator (or an open Google Cloud
   incident naming the product) holds the send without consuming an attempt — and
@@ -271,7 +273,7 @@ box already holds a draft (including Gemini's `*`-glyph box). Outage detection i
 scoped to Claude Code's `API Error` banner (accepted on Claude-identified and
 unidentified terminals alike) and to Codex's error line on Codex-identified
 terminals only; rate-limit detection is generic, with agent-specific idle chrome
-recognised for Gemini CLI. Untrusted terminal text
+recognised for Claude Code and Gemini CLI. Untrusted terminal text
 is length-capped and sanitized (secrets redacted) before it is matched or logged,
 and a malformed read or parse on one terminal can never abort the tick for the
 others. Network access is limited to the connectivity probe (once per tick that
@@ -292,7 +294,7 @@ identity.
 
 | Agent | Rate limit | API outage | Status feed | Notes |
 |---|---|---|---|---|
-| Claude Code | yes | yes | `status.claude.com` (Statuspage) | Reference behaviour. |
+| Claude Code | yes | yes | `status.claude.com` (Statuspage) | Orca identities `claude` and `claude-agent-teams`. Supports `You've hit your session limit · resets <time> (<IANA zone>)` and the existing Claude limit forms. |
 | Codex | yes (+ reset-less alert) | yes (`■` error line) | `status.openai.com` (Statuspage) | Held while `Reconnecting… N/5` is on screen. |
 | Gemini CLI | yes | no | Google Cloud `incidents.json`, product *Vertex Gemini API* | `Usage limit reached for <model>.` / `Access resets at <time>.` A zone abbreviation after the clock (`3:00 PM PST`) is honoured at its fixed offset; a bare clock is read as local time. Gemini's high-demand fallback line is transient and self-heals, so no outage rule. |
 
@@ -309,8 +311,9 @@ because Gemini raises no outage events.)
 
 To exercise a provider without a live agent, use the fakes under `e2e/`:
 `node e2e/fake-tui.mjs <file> --gemini "3:00 PM PST"` prints Gemini's real
-banner and idle box (`--outage`, `--outage-read`, and `--outage-marker` cover
-Claude's supported outage envelopes; no flag prints Claude's limit banner), and
+banner and idle box. The `--outage`, `--outage-read`, and `--outage-marker`
+modes cover Claude's supported outage envelopes. The `--session-limit` mode
+prints the captured Claude session-limit banner and idle screen.
 `node e2e/status-stub.mjs <port> --gcp "Vertex Gemini API"
 open,closed,none` serves Google Cloud-shaped incident feeds on loopback (the
 bare form serves Statuspage indicators). Point the daemon at a stub with
