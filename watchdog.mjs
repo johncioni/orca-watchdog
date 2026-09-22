@@ -54,6 +54,7 @@ const KINDS = Object.keys(SCHEDULE);
 //   fingerprint[]   — window regexes for identity routing.
 //   chrome.trailing — extra per-provider trailing-chrome lines.
 //   chrome.draft    — extra per-provider occupied-input lines.
+//   chrome.footerStart — optional structural input-box boundary markers.
 //   status          — provider health adapter config (env-overridable URL for the e2e stub).
 const freezeProvider = (provider) => {
   for (const value of Object.values(provider)) {
@@ -105,6 +106,11 @@ export function defineProviders(entries) {
     draft.forEach((re, index) => {
       if (!(re instanceof RegExp)) invalid(`chrome.draft[${index}]`, 'must be a RegExp');
     });
+    const footerStart = chrome.footerStart ?? null;
+    if (footerStart !== null) {
+      if (!(footerStart?.prompt instanceof RegExp)) invalid('chrome.footerStart.prompt', 'must be a RegExp');
+      if (!(footerStart?.rule instanceof RegExp)) invalid('chrome.footerStart.rule', 'must be a RegExp');
+    }
 
     const statusKind = entry.status?.kind;
     if (!['statuspage', 'gcp-incidents', 'none'].includes(statusKind)) {
@@ -123,7 +129,8 @@ export function defineProviders(entries) {
       limit: { ...entry.limit },
       outage: outage.map((row) => ({ ...row })),
       fingerprint: [...fingerprint],
-      chrome: { ...chrome, trailing: [...trailing], draft: [...draft] },
+      chrome: { ...chrome, trailing: [...trailing], draft: [...draft],
+        footerStart: footerStart === null ? null : { ...footerStart } },
       status: { ...entry.status },
     });
   });
@@ -137,11 +144,17 @@ export const PROVIDERS = defineProviders([
     kinds: { limit: true, outage: true, limitOpen: false },
     limit: { rule: 'generic' },
     outage: [
+      // Claude Code history markers "⏺" and "⎿", or the same API error as a bare line.
       { id: 'claude-api-error', alsoUnknown: true,
-        re: /^(⎿\s*)?API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i },
+        re: /^(?:[⎿⏺]\s*)?API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i },
     ],
     fingerprint: [],
-    chrome: { trailing: [] },
+    chrome: {
+      trailing: [
+        /^✻ [A-Za-z]+ for \d+(?:h|m|s)(?: \d+(?:h|m|s)){0,2} · done \d{1,2}:\d{2} [AP]M$/,
+      ],
+      footerStart: { prompt: /^❯$/, rule: /^─+$/ },
+    },
     status: { kind: 'statuspage', url: 'https://status.claude.com/api/v2/status.json' },
   },
   {
@@ -189,7 +202,7 @@ const GRACE_PAST_MS = 2 * 60 * MIN; // absolute time this recently past = alread
 // than the stored one is honoured before a due send (DOG-24). Above any sub-tick
 // reparse jitter of a counting-down relative banner; only a real shift trips it.
 const RESET_REFRESH_MIN_MS = 5 * MIN;
-const TAIL_LINES = 15;
+const TAIL_LINES = 18;              // captured Claude tail (15 lines) + 3-line margin (DOG-48)
 const READ_BUDGET_MS = 3 * MIN;    // stop reading terminals before the 4-min tick deadline
 const READ_CONCURRENCY = 4;        // parallel `terminal read`s per tick; orca serialises beyond a few
 
@@ -267,7 +280,19 @@ const isTrailingChrome = (l) => isChrome(l) || FOOTER_RE.test(l);
 // provider declares as its own trailing chrome, consulted only for that platform.
 const isTrailingChromeFor = (platform, l) =>
   isTrailingChrome(l) || (providerFor(platform)?.chrome?.trailing?.some((re) => re.test(l)) ?? false);
-const lastIndex = (arr, pred) => { let i = -1; arr.forEach((x, j) => { if (pred(x)) i = j; }); return i; };
+const lastIndex = (arr, pred) => { let i = -1; arr.forEach((x, j) => { if (pred(x, j)) i = j; }); return i; };
+// Claude's footer content changes with model, width, and plugins. The stable
+// boundary is its closed input box: opening rule, bare prompt, closing rule.
+// Once that structure exists, the prompt and everything from the closing rule
+// down are UI chrome; ordinary agent output remains above the box.
+const footerStartFor = (platform, window) => {
+  const marker = providerFor(platform)?.chrome?.footerStart;
+  if (marker === null || marker === undefined) return -1;
+  return lastIndex(window, (line, i) => marker.rule.test(line)
+    && marker.prompt.test(window[i - 1] ?? '') && marker.rule.test(window[i - 2] ?? ''));
+};
+const isTrailingChromeAt = (platform, window, index, footerStart) =>
+  (footerStart >= 0 && index >= footerStart - 1) || isTrailingChromeFor(platform, window[index]);
 
 export function shouldLog(level, env = process.env) {
   return level !== 'debug' || Boolean(env.WATCHDOG_DEBUG);
@@ -307,7 +332,9 @@ const CODEX_LIMIT_FORMS = [
 ];
 
 export function detectBanner(lines, platform = 'unknown', now = new Date()) {
+  const sourceWindow = lines.slice(-TAIL_LINES).map((l) => stripAnsi(l).slice(0, WINDOW_LINE_MAX));
   const window = toWindow(lines);
+  const platformFooterStart = footerStartFor(platform, window);
   // The bespoke Codex multi-line limit parser is selected by the provider's
   // limit.rule (DOG-37) — equivalent to the prior `platform === 'codex'` gate
   // (non-codex platforms default to the 'generic' rule and never enter this block).
@@ -332,20 +359,23 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   // --- limit rule (unchanged semantics; now on stripped lines) ---
   // Drop soft "approaching … limit" warning lines first, so such a warning can
   // neither be mistaken for a reached-banner nor veto a genuine reached-banner
-  // that happens to share the same 15-line window (per-line veto, not whole-window).
-  const kept = window.filter((l) => !VETO_RE.test(l) && !FOOTER_RE.test(l));
+  // that happens to share the same 18-line window (per-line veto, not whole-window).
+  const beforeInputBox = (_line, index) => platformFooterStart < 0 || index < platformFooterStart - 2;
+  const kept = window.filter((l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l));
   const text = kept.join('\n');
   let limit = null;
   // The limit phrase and the reached word must sit on ONE line: a banner says
   // "usage limit reached"; prose and logs scatter the words across lines.
   const reachedLine = (l) => LIMIT_RE.test(l) && REACHED_RE.test(l);
   if (c < 0 && kept.some(reachedLine) && RESET_RE.test(text)) {
-    const isRelevant = (l) => !VETO_RE.test(l) && !FOOTER_RE.test(l) && (LIMIT_RE.test(l) || RESET_RE.test(l));
+    const isRelevant = (l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l)
+      && (LIMIT_RE.test(l) || RESET_RE.test(l));
     const l = lastIndex(window, isRelevant);
     // Same final-block guard the Codex limit and outage rules use: a banner the
     // agent already scrolled past (ordinary output between it and an idle empty
     // box) is stale and must not re-fire a resume send (DOG-24).
-    if (window.slice(l + 1).every((line) => isTrailingChromeFor(platform, line))) {
+    if (window.slice(l + 1).every((_line, offset) =>
+      isTrailingChromeAt(platform, window, l + 1 + offset, platformFooterStart))) {
       limit = { kind: 'limit', bannerText: sanitize(window.filter(isRelevant).join(' | '), 600),
         matchedLine: window[l], patternId: 'limit', index: l };
       // Gemini publishes an absolute reset clock and callers need the resolved
@@ -363,7 +393,23 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     const e = lastIndex(window, (l) => p.re.test(l));
     if (e < 0) continue;
     if (lastIndex(window, (l) => RETRY_RE.test(l)) >= e) continue;   // still retrying
-    if (!window.slice(e + 1).every((line) => isTrailingChromeFor(platform, line))) continue; // stale: agent moved on
+    const outagePlatform = p.platforms[0];
+    const outageFooterStart = outagePlatform === platform
+      ? platformFooterStart : footerStartFor(outagePlatform, window);
+    let trailingStart = e + 1;
+    // The capture has three physical continuation lines; one extra line allows
+    // terminal-width variance. Once chrome begins, ordinary output stays stale.
+    if (p.id === 'claude-api-error' && /^⏺/.test(window[e])) {
+      let continuations = 0;
+      while (continuations < 4 && trailingStart < window.length
+        && !isTrailingChromeAt(outagePlatform, window, trailingStart, outageFooterStart)
+        && /^[ \t]+\S/.test(sourceWindow[trailingStart])) {
+        trailingStart++;
+        continuations++;
+      }
+    }
+    if (!window.slice(trailingStart).every((_line, offset) =>
+      isTrailingChromeAt(outagePlatform, window, trailingStart + offset, outageFooterStart))) continue; // stale: agent moved on
     outage = { kind: 'outage', bannerText: sanitize(window[e], 200),
       matchedLine: window[e], patternId: p.id, index: e };
     break;
@@ -597,12 +643,12 @@ export function reconcile(state, observations, now, liveHandles = null, newEpiso
 
 const SHELL_PROMPT_RE = /[$%#❯➜λ❱>]$/;
 // True when the last non-empty line of a tail is a shell prompt, i.e. the agent
-// has exited and a send would land in the shell (spec §6.4). A bare ">" is
-// Claude Code's empty input box only with independent evidence (agentIdentity).
+// has exited and a send would land in the shell (spec §6.4). Bare ">" and "❯"
+// are Claude Code empty input boxes only with independent evidence (agentIdentity).
 export function isShellPrompt(tail, agentIdentity) {
   const last = tail.map((l) => stripAnsi(l).trim()).filter(Boolean).at(-1);
   if (last === undefined) return false;
-  if (last === '>') return agentIdentity !== 'claude';
+  if (last === '>' || last === '❯') return agentIdentity !== 'claude';
   return SHELL_PROMPT_RE.test(last);
 }
 
@@ -621,6 +667,8 @@ export function isInputOccupied(tail, platform = 'unknown') {
   // not missed. Strictly safer: it can only add skips, never a send (DOG-24).
   const lines = tail.map((l) => stripAnsi(l).trim());
   if (lines.some((l) => INPUT_DRAFT_RE.test(l))) return true;
+  if (platform === 'claude' && lines.some((l, i) => /^❯\s+\S/.test(l)
+    && /^─+$/.test(lines[i - 1] ?? '') && /^─+$/.test(lines[i + 1] ?? ''))) return true;
   const providerDraft = providerFor(platform)?.chrome?.draft ?? [];
   if (lines.some((l) => providerDraft.some((re) => re.test(l)))) return true;
   const last = lines.filter(Boolean).at(-1);

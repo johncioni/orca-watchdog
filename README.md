@@ -197,7 +197,7 @@ want a clean slate.
 ## How it works
 
 `launchd` runs `watchdog.mjs` every 5 minutes. Each tick reads every connected
-Orca terminal's tail, looks for a banner in the last 15 lines, reconciles what it
+Orca terminal's tail, looks for a banner in the last 18 lines, reconciles what it
 finds against the events it is already tracking, and then — for any event whose
 resume is due — walks a fixed sequence of safety gates before it will send. If
 any gate is inconclusive, it holds and tries again on a later tick.
@@ -207,7 +207,7 @@ flowchart TD
     A["launchd timer — every 5 min"] --> P{"Paused, or another<br/>tick already running?"}
     P -->|yes| Z(["Do nothing"])
     P -->|no| R["Read every connected<br/>Orca terminal's tail"]
-    R --> D["Detect a banner in the last 15 lines:<br/>rate limit, outage, or Codex reset-less limit"]
+    R --> D["Detect a banner in the last 18 lines:<br/>rate limit, outage, or Codex reset-less limit"]
     D --> RC["Reconcile events<br/>(new, cleared, replaced, re-armed, gave up)"]
     RC --> Q{"Any event due<br/>to resume?"}
     Q -->|no| Z
