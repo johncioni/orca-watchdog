@@ -225,8 +225,9 @@ const GRACE_PAST_MS = 2 * 60 * MIN; // absolute time this recently past = alread
 // than the stored one is honoured before a due send (DOG-24). Above any sub-tick
 // reparse jitter of a counting-down relative banner; only a real shift trips it.
 const RESET_REFRESH_MIN_MS = 5 * MIN;
-// Longer than the 5-minute tick: one partial terminal list cannot confirm a closure.
-const VANISH_CONFIRM_MS = 10 * MIN;
+// The 2026-09-22 Orca outage lasted about 7 hours. A missing handle cannot
+// send, so 12 hours tolerates that outage shape at the cost of slower cleanup.
+const VANISH_CONFIRM_MS = 12 * 60 * MIN;
 const TAIL_LINES = 18;              // captured Claude tail (15 lines) + 3-line margin (DOG-48)
 const READ_BUDGET_MS = 3 * MIN;    // stop reading terminals before the 4-min tick deadline
 const READ_CONCURRENCY = 4;        // parallel `terminal read`s per tick; orca serialises beyond a few
@@ -1143,7 +1144,9 @@ export function acquireLock(lockFile = LOCK_FILE) {
 
 async function readTail(handle, orcaFn = orca) {
   const r = await orcaFn(['terminal', 'read', '--terminal', handle]);
-  return r.terminal?.tail ?? [];
+  const tail = r?.terminal?.tail;
+  if (!Array.isArray(tail)) throw new Error('terminal read returned no tail array');
+  return tail;
 }
 
 const DEFAULT_DEPS = () => ({ orca, fetchImpl: globalThis.fetch, env: process.env, now: () => new Date(), loadState, saveState, log,
@@ -1198,9 +1201,11 @@ export async function tick({ dryRun }, depsIn = {}) {
 
   const now = deps.now();
   const state = deps.loadState();
+  const hasStoredEvents = Object.keys(state).length > 0;
   const degradedReason = !terminalsArrayPresent ? 'missing terminals array'
-    : terminals.length === 0 && Object.keys(state).length > 0 ? 'empty terminal list with stored events'
-    : attemptedReads > 0 && observations.length === 0 ? 'all attempted reads failed' : null;
+    : terminals.length === 0 && hasStoredEvents ? 'empty terminal list with stored events'
+    : attemptedReads === 0 && hasStoredEvents ? 'no attempted reads with stored events'
+    : attemptedReads > 0 && observations.length === 0 && hasStoredEvents ? 'all attempted reads failed' : null;
   if (degradedReason) log('warn', `degraded tick: ${degradedReason}; events frozen`);
   // A degraded list/read result is no evidence about stored events. Otherwise
   // pass listed handles so reconcile can distinguish missing from unread.
@@ -1208,6 +1213,10 @@ export async function tick({ dryRun }, depsIn = {}) {
   const { events, sendCandidates, removals } = degradedReason
     ? { events: structuredClone(state), sendCandidates: [], removals: [] }
     : reconcile(state, observations, now, liveHandles, deps.newEpisodeId);
+  if (degradedReason && terminalsArrayPresent) {
+    const listed = new Set(liveHandles);
+    for (const ev of Object.values(events)) if (listed.has(ev.handle)) delete ev.vanishedAt;
+  }
   for (const { handle, kind, reason } of removals) log('info', `removed ${kind} on ${handle}: ${reason}`);
   for (const ev of Object.values(events)) {
     if (observations.some(o => o.handle === ev.handle)) waiting(ev.handle,
@@ -1337,7 +1346,11 @@ export async function tick({ dryRun }, depsIn = {}) {
       log('info', `removed ${ev.kind} on ${ev.handle}: replaced`);
       events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
     }
-    if (ev.kind === 'limit') {                                                       // 3b. reset moved later
+    // An unsent, unchanged banner still names the original reset; reparsing an
+    // old clock after the 2-hour grace would roll it to tomorrow. After any
+    // send, keep the shift guard even for identical text: the limit may persist.
+    if (ev.kind === 'limit'
+      && (fresh.bannerText !== ev.bannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
       const freshReset = fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
       if (freshReset && freshReset.getTime() - new Date(ev.resetAt).getTime() >= RESET_REFRESH_MIN_MS) {
         ev.resetAt = freshReset.toISOString();
