@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: An outage or retry line below a limit's reached line makes it stale
+
+The DOG-57 `stale` check also fires on any `OUTAGE_PATTERNS` payload or `RETRY_RE` line
+strictly below `r`, above the input box: the agent made requests after the banner.
+`RESET_RE` uses `\bavailable`. The payload check runs on every platform, anywhere in the
+line, so adding a provider outage row widens it; rerun a main-vs-HEAD differential then.
+PR: https://github.com/johncioni/orca-watchdog/pull/64
+
 ## 2026-09-23: Limit/outage arbitration uses the limit's reached line
 
 `pick` keeps a limit only if its reached line (`reachedIndex`) is at or below the

@@ -250,7 +250,7 @@ const READ_CONCURRENCY = 4;        // parallel `terminal read`s per tick; orca s
 // capped before any regex runs (see WINDOW_LINE_MAX / toWindow).
 const LIMIT_RE = /((usage|rate|session|weekly|daily|\d{1,4}[- ]hour)\s+limit|quota)/i;
 const REACHED_RE = /(reached|hit|exceeded)/i;
-const RESET_RE = /(resets?\b|try again|available|come back)/i;
+const RESET_RE = /(resets?\b|try again|\bavailable|come back)/i;
 const VETO_RE = /approaching[^\n]*limit/i;
 
 // Claude Code's persistent status footer ("Context … │ Usage … (resets in 3h 8m)")
@@ -504,9 +504,12 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     const outputStart = platform === 'unknown' ? PROVIDERS.flatMap((p) => p.chrome.outputStart)
       : providerFor(platform)?.chrome.outputStart ?? [];
     const isOutputStart = (x) => outputStart.some((re) => re.test(x));
-    // A new message after the reached line makes the banner stale even when
-    // later prose contains reset words and becomes the last relevant line.
-    const stale = window.some((x, i) => i > r && beforeInputBox(x, i) && isOutputStart(x));
+    // A new message, API outage, or retry after the reached line stales the limit.
+    // Key on the reached line: later prose with reset words can become the last
+    // relevant line without making the old banner current.
+    const stale = window.some((x, i) => i > r && beforeInputBox(x, i)
+      && (isOutputStart(x) || OUTAGE_PATTERNS.some((pattern) => testPattern(pattern.re, x))
+        || RETRY_RE.test(x)));
     // Same final-block guard the Codex limit and outage rules use: a banner the
     // agent already scrolled past (ordinary output between it and an idle empty
     // box) is stale and must not re-fire a resume send (DOG-24).

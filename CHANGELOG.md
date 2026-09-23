@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Ignore an old limit banner when an API outage or retry line follows it, including outage near misses. Do not treat `Unavailable` as reset wording. (DOG-59)
+
 ## 1.2.8 - 2026-09-23
 
 ### Fixed
