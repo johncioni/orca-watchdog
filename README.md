@@ -207,11 +207,11 @@ while events exist, or no successful reads while events exist. A degraded tick
 that lists a terminal clears its pending disappearance mark. A terminal missing
 from healthy ticks is removed after 12 hours; one that reappears keeps its event
 and attempt count. Once reads recover, an unsent limit event can resume after
-its reset if the original banner remains on screen, even if its lines rewrap.
-After a send, an unchanged relative reset stays anchored to detection so
-scheduled retries can run. A changed countdown or an absolute clock that
-parses later still holds the event. Event removals log the terminal, kind,
-and reason.
+its reset if the last accepted banner remains on screen, even if its lines
+rewrap. After a send, an unchanged relative reset stays anchored to detection,
+or to when a later reset was last accepted, so scheduled retries can run. A
+changed countdown or an absolute clock that parses later still holds the event.
+Event removals log the terminal, kind, and reason.
 
 ```mermaid
 flowchart TD

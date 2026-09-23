@@ -608,6 +608,7 @@ export function validateEvent(key, ev) {
   if (ev.lastAttemptAt === null && (!unsentStatus || ev.attempts > 0)) return 'lastAttemptAt: required once an attempt was made';
   if (ev.clearedAt !== undefined && !isIso(ev.clearedAt)) return 'clearedAt: not a timestamp';
   if (ev.vanishedAt !== undefined && !isIso(ev.vanishedAt)) return 'vanishedAt: not a timestamp';
+  if (ev.resetAnchorAt !== undefined && !isIso(ev.resetAnchorAt)) return 'resetAnchorAt: not a timestamp';
   return null;
 }
 
@@ -1386,18 +1387,23 @@ export async function tick({ dryRun }, depsIn = {}) {
       log('info', `removed ${ev.kind} on ${ev.handle}: replaced`);
       events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
     }
-    // An unsent, unchanged banner still names the original reset; reparsing an
-    // old clock after the 2-hour grace would roll it to tomorrow. After a send,
-    // unchanged relative text stays anchored to detection; absolute clocks
-    // still pass through the shift guard because the limit may persist.
+    // An unsent, unchanged banner still names the last accepted reset;
+    // reparsing an old clock after the 2-hour grace would roll it to tomorrow.
+    // After a send, unchanged relative text stays anchored to detection or the
+    // last accepted reset; absolute clocks still pass through the shift guard
+    // because the limit may persist.
     const sameBannerText = normalizeBannerText(fresh.bannerText) === normalizeBannerText(ev.bannerText);
     if (ev.kind === 'limit'
       && (!sameBannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
       const freshReset = sameBannerText && isRelativeReset(fresh.bannerText)
-        ? parseResetTime(fresh.bannerText, new Date(ev.detectedAt))
+        ? parseResetTime(fresh.bannerText, new Date(ev.resetAnchorAt ?? ev.detectedAt))
         : fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
       if (freshReset && freshReset.getTime() - new Date(ev.resetAt).getTime() >= RESET_REFRESH_MIN_MS) {
         ev.resetAt = freshReset.toISOString();
+        if (!sameBannerText) {
+          ev.bannerText = fresh.bannerText;
+          ev.resetAnchorAt = now.toISOString();
+        }
         if (now - new Date(ev.resetAt) < SCHEDULE.limit.bufferMs) {
           log('info', `skip ${ev.handle}: reset moved later to ${ev.resetAt}; holding`);
           deps.saveState(events); continue;
