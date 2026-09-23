@@ -54,6 +54,7 @@ const KINDS = Object.keys(SCHEDULE);
 //   fingerprint[]   — window regexes for identity routing.
 //   chrome.trailing — extra per-provider trailing-chrome lines.
 //   chrome.draft    — extra per-provider occupied-input lines.
+//   chrome.outputStart — per-provider new-message markers that stale prior limits.
 //   chrome.footerStart — optional structural input-box boundary markers.
 //   status          — provider health adapter config (env-overridable URL for the e2e stub).
 const freezeProvider = (provider) => {

@@ -1845,6 +1845,22 @@ for (const platform of ['claude', 'unknown']) {
   });
 }
 
+test('DOG-57: a marked outage after an old limit creates only an outage event', async () => {
+  const now = new Date('2026-09-22T14:30:00Z');
+  const tail = [
+    'Claude usage limit reached. Your limit will reset at 9am (America/New_York).',
+    '⏺ API Error: 503 Service Unavailable',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ];
+  const banner = detectBanner(tail, 'claude', now);
+  assert.equal(banner?.kind, 'outage');
+  assert.equal(banner.patternId, 'claude-api-error');
+  const h = harness({ tail, terminals: [T], state: {}, now });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(Object.values(h.saved()).map((event) => event.kind), ['outage']);
+  assert.deepEqual(h.sent, []);
+});
+
 test('DOG-57: Gemini output followed by relevant prose makes an older limit stale', () => {
   const now = new Date('2026-09-16T12:00:00Z');
   for (const platform of ['gemini', 'unknown']) {

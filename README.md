@@ -318,12 +318,11 @@ it may raise (`limit`, `outage`, reset-less `limitOpen`); its limit rule
 that may legitimately follow a banner while the agent is still stalled (so a
 stale banner with real output after it is ignored); output-start markers that
 make a generic limit stale when a new message follows its last reached line;
-a draft pattern so the
-watchdog never types into an input box that already holds text; and a status
-adapter (`statuspage`, `gcp-incidents`, or `none`). Every feed-backed adapter is
-fail-closed: a feed that cannot be fetched or parsed holds the resume rather than
-allowing it. (Gemini's Google Cloud adapter is declared but not yet queried,
-because Gemini raises no outage events.)
+a draft pattern so the watchdog never types into an input box that already
+holds text; and a status adapter (`statuspage`, `gcp-incidents`, or `none`).
+Every feed-backed adapter is fail-closed: a feed that cannot be fetched or
+parsed holds the resume rather than allowing it. (Gemini's Google Cloud adapter
+is declared but not yet queried, because Gemini raises no outage events.)
 
 Claude's `⏺` and Gemini's `✦` message markers prevent later prose from reviving
 an old limit banner. Unknown terminals use both markers. A banner without a
