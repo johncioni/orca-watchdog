@@ -1027,13 +1027,19 @@ test('an IANA reset zone after a separator must occupy the whole segment (DOG-50
   );
   const banner = detectBanner([
     'Claude usage limit reached. Your limit will reset at 3am',
-    '⏺ note',
+    'note',
     '(Asia/Tokyo) servers available again soon',
     ...CLAUDE_DOG50_NARROW_BOX,
   ], 'claude', now);
   assert.ok(banner);
   assert.equal(newEvent({ handle: 'term_zone_suffix', platform: 'claude', banner }, now).resetAt,
     local.toISOString());
+  assert.equal(detectBanner([
+    'Claude usage limit reached. Your limit will reset at 3am',
+    '⏺ note',
+    '(Asia/Tokyo) servers available again soon',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ], 'claude', now), null);
 });
 
 test('IANA reset clocks resolve DST gaps forward with the pre-transition offset (DOG-50 review F3)', () => {
@@ -1819,6 +1825,68 @@ function harness({ tail, terminals, indicator = 'none', state = {}, now = at(10)
 }
 const T = { handle: H, connected: true, writable: true, agentIdentity: 'claude' };
 const OUTAGE_TAIL = [CLAUDE_529, '', '> ', '? for shortcuts'];
+
+const DOG57_P4 = [
+  'Claude usage limit reached. Your limit will reset at 9am (America/New_York).',
+  '⏺ note',
+  'servers available again soon',
+];
+for (const platform of ['claude', 'unknown']) {
+  const tail = [...DOG57_P4, ...(platform === 'claude' ? CLAUDE_DOG50_NARROW_BOX : CHROME_TAIL)];
+  const now = new Date('2026-09-22T14:30:00Z'); // 90 minutes after 9am New York
+  test(`DOG-57: P4 relevant prose after a new message cannot revive a stale ${platform} limit`, () => {
+    assert.equal(detectBanner(tail, platform, now), null);
+  });
+  test(`DOG-57: P4 stores no event and sends nothing for ${platform}`, async () => {
+    const h = harness({ tail, terminals: [{ ...T, agentIdentity: platform }], state: {}, now });
+    await tick({ dryRun: false }, h.deps);
+    assert.deepEqual(h.sent, []);
+    assert.deepEqual(h.saved(), {});
+  });
+}
+
+test('DOG-57: Gemini output followed by relevant prose makes an older limit stale', () => {
+  const now = new Date('2026-09-16T12:00:00Z');
+  for (const platform of ['gemini', 'unknown']) {
+    const tail = [...GEMINI_BANNER.slice(0, 2), '✦ Here is the file…', 'servers available again soon',
+      ...(platform === 'gemini' ? GEMINI_BANNER.slice(2) : CHROME_TAIL)];
+    assert.equal(detectBanner(tail, platform, now), null, platform);
+  }
+});
+
+test('DOG-57: a message marker before the reached line does not stale a current banner', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const tail = ['⏺ note', DOG57_P4[0], ...CLAUDE_DOG50_NARROW_BOX];
+  const banner = detectBanner(tail, 'claude', now);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: H, platform: 'claude', banner }, now).resetAt, '2026-09-22T13:00:00.000Z');
+});
+
+for (const [gap, expected] of [
+  ['ordinary output', '2026-09-22T13:00:00.000Z'],
+  ['⏺ note', '2026-09-22T07:00:00.000Z'],
+]) {
+  test(`DOG-57: no-clock fallback ${gap === 'ordinary output' ? 'inherits a clock across ordinary output' : 'stops at a new message'}`, () => {
+    const now = new Date('2026-09-22T06:00:00Z');
+    const tail = [DOG57_P4[0], gap, '5-hour limit reached. Try again later.', ...CLAUDE_DOG50_NARROW_BOX];
+    const banner = detectBanner(tail, 'claude', now);
+    assert.equal(banner?.kind, 'limit');
+    assert.equal(newEvent({ handle: H, platform: 'claude', banner }, now).resetAt, expected);
+  });
+}
+
+test('DOG-57: provider output-start markers reject malformed lists and stay immutable', () => {
+  const provider = watchdog.PROVIDERS[0];
+  for (const outputStart of [/^⏺\s/, ['not a regex']]) {
+    assert.throws(() => watchdog.defineProviders([{ ...provider, chrome: { ...provider.chrome, outputStart } }]),
+      /Provider claude: chrome\.outputStart/);
+  }
+  const markers = [/^⏺\s/];
+  const [defined] = watchdog.defineProviders([{ ...provider, chrome: { ...provider.chrome, outputStart: markers } }]);
+  markers.push(/^✦\s/);
+  assert.equal(defined.chrome.outputStart.length, 1);
+  assert.throws(() => defined.chrome.outputStart.push(/^✦\s/), TypeError);
+});
 
 test('DOG-51: limit events survive alternating failed 7-, 4-, and 0-terminal ticks and resume once after reset', async () => {
   const first = { ...T, handle: 'term_22107880' };
@@ -3528,7 +3596,7 @@ test('DOG-38 registry: defineProviders supplies inert defaults for optional seam
 
   assert.deepEqual(provider.outage, []);
   assert.deepEqual(provider.fingerprint, []);
-  assert.deepEqual(provider.chrome, { trailing: [], draft: [], footerStart: null });
+  assert.deepEqual(provider.chrome, { trailing: [], draft: [], outputStart: [], footerStart: null });
 });
 
 test('DOG-38 registry: provider and derived platform order is stable', () => {

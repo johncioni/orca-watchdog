@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Ignore stale limit banners when a new Claude or Gemini message follows the last limit-reached line, even if later prose mentions availability. Stop reset-clock fallback at new messages while preserving fallback across ordinary output. (DOG-57)
+
 ## 1.2.6 - 2026-09-22
 
 ### Fixed

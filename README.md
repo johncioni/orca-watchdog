@@ -316,12 +316,19 @@ A registry entry carries: the Orca identities that map to it; which event kinds
 it may raise (`limit`, `outage`, reset-less `limitOpen`); its limit rule
 (generic, or Codex's `■` form); source-verified outage patterns; screen chrome
 that may legitimately follow a banner while the agent is still stalled (so a
-stale banner with real output after it is ignored); a draft pattern so the
+stale banner with real output after it is ignored); output-start markers that
+make a generic limit stale when a new message follows its last reached line;
+a draft pattern so the
 watchdog never types into an input box that already holds text; and a status
 adapter (`statuspage`, `gcp-incidents`, or `none`). Every feed-backed adapter is
 fail-closed: a feed that cannot be fetched or parsed holds the resume rather than
 allowing it. (Gemini's Google Cloud adapter is declared but not yet queried,
 because Gemini raises no outage events.)
+
+Claude's `⏺` and Gemini's `✦` message markers prevent later prose from reviving
+an old limit banner. Unknown terminals use both markers. A banner without a
+parseable reset can inherit an older banner's clock across ordinary output,
+but a message marker stops that fallback, leaving the 60-minute default.
 
 To exercise a provider without a live agent, use the fakes under `e2e/`:
 `node e2e/fake-tui.mjs <file> "3am"` prints the classic Claude limit banner by
