@@ -225,6 +225,8 @@ const GRACE_PAST_MS = 2 * 60 * MIN; // absolute time this recently past = alread
 // than the stored one is honoured before a due send (DOG-24). Above any sub-tick
 // reparse jitter of a counting-down relative banner; only a real shift trips it.
 const RESET_REFRESH_MIN_MS = 5 * MIN;
+// Joins and whitespace runs are wrapping, not content (DOG-54).
+const normalizeBannerText = (text) => text.replace(/ \| /g, ' ').replace(/\s+/g, ' ').trim();
 // The 2026-09-22 Orca outage lasted about 7 hours. A missing handle cannot
 // send, so 12 hours tolerates that outage shape at the cost of slower cleanup.
 const VANISH_CONFIRM_MS = 12 * 60 * MIN;
@@ -247,7 +249,7 @@ const VETO_RE = /approaching[^\n]*limit/i;
 // is on screen in every Claude terminal and always satisfies RESET_RE. It is
 // chrome, never evidence: dropped before the limit rule runs.
 const FOOTER_RE = /│\s*Usage\s/;
-const IANA_ZONE_LINE_RE = /^\(([^()]*\/[^()]*)\)$/;
+export const IANA_ZONE_LINE_RE = /^\(([^()/]*(?:\/[^()/]*)+)\)$/;
 const CLOCK_AT_END_RE = /(?:\b\d{1,2}(?::[0-5]\d)?\s*[ap]\.?m\.?|\b(?:[01]?\d|2[0-3]):[0-5]\d)$/i;
 
 // CSI (ESC [ … final), OSC (ESC ] … BEL|ST), charset selects (ESC ( B),
@@ -495,7 +497,15 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     // box) is stale and must not re-fire a resume send (DOG-24).
     if (window.slice(l + 1).every((_line, offset) =>
       isTrailingChromeAt(platform, window, l + 1 + offset, platformFooterStart))) {
-      limit = { kind: 'limit', bannerText: sanitize(window.filter(isRelevant).join(' | '), 600),
+      let start = l;
+      while (start > 0 && isRelevant(window[start - 1], start - 1)) start--;
+      let from = start;
+      if (parseResetTime(window.slice(start, l + 1).join(' | '), now) === null) {
+        const r = lastIndex(window, (x, i) => i < start && isCoreEvidence(x, i) && reachedLine(x));
+        if (r >= 0) { from = r; while (from > 0 && isRelevant(window[from - 1], from - 1)) from--; }
+      }
+      const blockLines = window.slice(from, l + 1).filter((x, off) => isRelevant(x, from + off));
+      limit = { kind: 'limit', bannerText: sanitize(blockLines.join(' | '), 600),
         matchedLine: window[l], patternId: 'limit', index: l };
       // Gemini publishes an absolute reset clock and callers need the resolved
       // local instant; the trailing timezone abbreviation is intentionally ignored.
@@ -714,19 +724,26 @@ function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
 // instant so callers' `?? fallback` / `?.toISOString()` engage instead of a
 // RangeError propagating up and aborting the whole tick (DOG-24).
 const validDate = (d) => Number.isFinite(d.getTime()) ? d : null;
+const REL_D_RE = /\bin\s+(\d+)\s+days?\b/i;
+const REL_HM_RE = /\bin\s+(\d+)\s*h(?:(?:ou)?rs?)?\b(?:\s*(?:and\s+)?(\d+)\s*m(?:in(?:ute)?s?)?)?/i;
+const REL_M_RE = /\bin\s+(\d+)\s*m(?:in(?:ute)?s?)?\b/i;
+
+export function isRelativeReset(text) {
+  return REL_D_RE.test(text) || REL_HM_RE.test(text) || REL_M_RE.test(text);
+}
 
 export function parseResetTime(text, now) {
   // "in 3 days" (weekly limits) — a day count, never a clock time.
-  const relD = text.match(/\bin\s+(\d+)\s+days?\b/i);
+  const relD = text.match(REL_D_RE);
   if (relD) return validDate(new Date(now.getTime() + Number(relD[1]) * 24 * 60 * MIN));
 
   // "in 2 hours 15 minutes", "in 2h 30m", "in 3h", "in 1hr 5m"
-  const relHM = text.match(/\bin\s+(\d+)\s*h(?:(?:ou)?rs?)?\b(?:\s*(?:and\s+)?(\d+)\s*m(?:in(?:ute)?s?)?)?/i);
+  const relHM = text.match(REL_HM_RE);
   if (relHM) {
     const mins = Number(relHM[1]) * 60 + Number(relHM[2] || 0);
     return validDate(new Date(now.getTime() + mins * MIN));
   }
-  const relM = text.match(/\bin\s+(\d+)\s*m(?:in(?:ute)?s?)?\b/i);
+  const relM = text.match(REL_M_RE);
   if (relM) return validDate(new Date(now.getTime() + Number(relM[1]) * MIN));
 
   const clock = parseClock(text);
@@ -1347,11 +1364,15 @@ export async function tick({ dryRun }, depsIn = {}) {
       events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
     }
     // An unsent, unchanged banner still names the original reset; reparsing an
-    // old clock after the 2-hour grace would roll it to tomorrow. After any
-    // send, keep the shift guard even for identical text: the limit may persist.
+    // old clock after the 2-hour grace would roll it to tomorrow. After a send,
+    // unchanged relative text stays anchored to detection; absolute clocks
+    // still pass through the shift guard because the limit may persist.
+    const sameBannerText = normalizeBannerText(fresh.bannerText) === normalizeBannerText(ev.bannerText);
     if (ev.kind === 'limit'
-      && (fresh.bannerText !== ev.bannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
-      const freshReset = fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
+      && (!sameBannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
+      const freshReset = sameBannerText && isRelativeReset(fresh.bannerText)
+        ? parseResetTime(fresh.bannerText, new Date(ev.detectedAt))
+        : fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
       if (freshReset && freshReset.getTime() - new Date(ev.resetAt).getTime() >= RESET_REFRESH_MIN_MS) {
         ev.resetAt = freshReset.toISOString();
         if (now - new Date(ev.resetAt) < SCHEDULE.limit.bufferMs) {

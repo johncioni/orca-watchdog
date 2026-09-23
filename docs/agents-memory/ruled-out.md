@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-22: A strict banner block with no fallback
+
+Taking the reset only from the last consecutive block lost it when a blank or tip
+line split a banner: the 60-minute default sent three resumes before the real reset,
+then gave up. Widening to the last reached line alone fails the mirror case. The
+block with a no-clock fallback matches 1.2.5 on every probed shape.
+PR: https://github.com/johncioni/orca-watchdog/pull/58
+
 ## 2026-09-22: Deleting an event on one missing or short confirmation of its handle
 
 Deleting on the first tick a handle was missing from `terminal list` lost two limit

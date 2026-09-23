@@ -29,10 +29,59 @@ const GEMINI_BANNER = [
 
 // --- detectBanner ---
 
+test('DOG-53: wrapped zone syntax accepts slash-separated names', () => {
+  for (const zoneLine of ['(America/New_York)', '(America/Argentina/Buenos_Aires)', '(src/foo)']) {
+    assert.equal(watchdog.IANA_ZONE_LINE_RE?.exec(zoneLine)?.[1], zoneLine.slice(1, -1));
+  }
+});
+
+test('DOG-53: slash-heavy non-zone lines do not stall limit detection', () => {
+  const pathological = '(' + '/'.repeat(1999);
+  const lines = [...Array(14).fill(pathological),
+    'Claude usage limit reached. Your limit will reset at 3am.', '> '];
+  assert.equal(detectBanner(lines, 'claude')?.kind, 'limit'); // warm the regex
+  const times = [];
+  for (let i = 0; i < 5; i++) {
+    const start = performance.now();
+    assert.equal(detectBanner(lines, 'claude')?.kind, 'limit');
+    times.push(performance.now() - start);
+  }
+  assert.ok(Math.min(...times) < 50, '14 slash-heavy lines should scan in under 50 ms');
+});
+
 test('detects Claude limit banner', () => {
   const b = detectBanner(CLAUDE_BANNER);
   assert.ok(b);
   assert.match(b.bannerText, /usage limit reached/i);
+});
+
+test('DOG-52: an earlier available clock does not set a Claude banner reset', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const banner = detectBanner(['available at 9:00', 'ordinary output',
+    'Claude usage limit reached. Your limit will reset at 10am (America/New_York).', '> '], 'claude', now);
+  assert.equal(banner?.bannerText, 'Claude usage limit reached. Your limit will reset at 10am (America/New_York).');
+  assert.equal(newEvent({ handle: 'term_current', platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T14:00:00.000Z');
+});
+
+test('DOG-52: a newer banner takes its own reset after an older banner', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const banner = detectBanner([
+    'Claude usage limit reached. Your limit will reset at 9am (America/New_York).',
+    'ordinary output',
+    'Claude usage limit reached. Your limit will reset at 10am (America/New_York).', '> ',
+  ], 'claude', now);
+  assert.equal(newEvent({ handle: 'term_newer', platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T14:00:00.000Z');
+});
+
+test('DOG-52: a reached block without a reset clause uses the 60-minute default', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const banner = detectBanner(['available at 9:00', 'ordinary output',
+    'Claude usage limit reached.', '> '], 'claude', now);
+  assert.equal(banner?.bannerText, 'Claude usage limit reached.');
+  assert.equal(newEvent({ handle: 'term_default', platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T07:00:00.000Z');
 });
 
 test('detects Codex limit banner', () => {
@@ -357,6 +406,23 @@ const CODEX_ERR = "■ We're currently experiencing high demand, which may cause
 const CODEX_FOOTER = 'Context 16% used · 5h 36% left · weekly 90% left · gpt-5.6-sol medium · main · Ready · Custom permissions';
 const CODEX_TAIL = ['─ Worked for 2m 51s ───────────', CODEX_ERR, '', '› Ask Codex to do anything', CODEX_FOOTER];
 const outageTail = (line) => ['some earlier output', line, ...CHROME_TAIL];
+
+test('DOG-52: existing Claude, Codex, and Gemini limit fixtures keep their reset instants', () => {
+  const fixtures = [
+    ['Claude classic', CLAUDE_BANNER, 'claude', new Date('2026-09-22T01:55:00Z'), '2026-09-22T07:00:00.000Z'],
+    ['Claude 5-hour', ['5-hour limit reached. Try again at 3pm.', '> '], 'claude',
+      new Date('2026-09-22T12:00:00'), new Date('2026-09-22T15:00:00').toISOString()],
+    ...CLAUDE_SESSION_LIMIT_CAPTURES.map(([name, tail]) =>
+      [`Claude session ${name}`, tail, 'claude', new Date('2026-09-22T01:55:00Z'), '2026-09-22T04:30:00.000Z']),
+    ['Codex', CODEX_BANNER, 'codex', new Date('2026-09-07T10:00:00'), new Date('2026-09-08T14:00:00').toISOString()],
+    ['Gemini', GEMINI_BANNER, 'gemini', new Date('2026-09-16T12:00:00Z'), '2026-09-16T23:00:00.000Z'],
+  ];
+  for (const [name, lines, platform, now, expected] of fixtures) {
+    const banner = detectBanner(lines, platform, now);
+    assert.equal(banner?.kind, 'limit', name);
+    assert.equal(newEvent({ handle: `term_${name}`, platform, banner }, now).resetAt, expected, name);
+  }
+});
 
 test('existing limit banners now carry kind "limit"', () => {
   assert.equal(detectBanner(CLAUDE_BANNER).kind, 'limit');
@@ -1036,6 +1102,16 @@ test('parses compact relative resets "in 3h 8m", "in 2h", "in 1hr 5m" (DOG-4)', 
   assert.equal(parseResetTime('resets in 2h', now).getTime(), now.getTime() + 120 * 60_000);
   assert.equal(parseResetTime('try again in 1hr 5m', now).getTime(), now.getTime() + 65 * 60_000);
   assert.equal(parseResetTime('resets in 45m', now).getTime(), now.getTime() + 45 * 60_000);
+});
+
+test('DOG-55: identifies the relative clauses parsed by parseResetTime', () => {
+  for (const text of ['resets in 3 days', 'resets in 2 hours 15 minutes',
+    'resets in 3h 8m', 'try again in 45 minutes']) {
+    assert.equal(watchdog.isRelativeReset?.(text), true, text);
+  }
+  for (const text of ['resets at 5pm', 'resets Sep 12 at 3pm']) {
+    assert.equal(watchdog.isRelativeReset?.(text), false, text);
+  }
 });
 
 test('parses multi-day and month-day resets instead of defaulting to today (DOG-5)', () => {
@@ -1790,6 +1866,56 @@ test('DOG-51: limit events survive alternating failed 7-, 4-, and 0-terminal tic
   assert.equal(logs.filter((line) => /warn degraded tick:/.test(line)).length, 4);
 });
 
+test('DOG-52 review F1: a session reset survives a blank or tip before /upgrade and sends once at reset', async () => {
+  const reached = "⎿  You've hit your session limit · resets 12:30am (America/New_York)";
+  for (const gap of ['', 'Tip: run /status for details']) {
+    const tail = [reached, gap, '/upgrade to increase your usage limit.', ...CLAUDE_DOG50_NARROW_BOX];
+    const detected = harness({ tail, terminals: [T], state: {}, now: new Date('2026-09-22T01:55:00Z') });
+    await tick({ dryRun: false }, detected.deps);
+    assert.equal(detected.saved()[H].resetAt, '2026-09-22T04:30:00.000Z', JSON.stringify(gap));
+    assert.deepEqual(detected.sent, []);
+    const due = harness({ tail, terminals: [T], state: detected.saved(), now: new Date('2026-09-22T04:35:00Z') });
+    await tick({ dryRun: false }, due.deps);
+    assert.deepEqual(due.sent, [RESUME_TEXT], JSON.stringify(gap));
+    assert.equal(due.saved()[H].attempts, 1);
+  }
+});
+
+test('DOG-54: a limit banner re-wrapped after failed reads sends once on recovery', async () => {
+  const original = 'Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).';
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: original,
+    detectedAt: '2026-09-22T06:33:00.000Z', resetAt: '2026-09-22T09:40:00.000Z',
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const failed = harness({ tail: [], terminals: [T], state, readThrows: true,
+    now: new Date('2026-09-22T09:45:00Z') });
+  await tick({ dryRun: false }, failed.deps);
+  assert.deepEqual(failed.sent, []);
+  const wrapped = ['Claude usage limit reached.',
+    'Your limit will reset at 5:40am (America/New_York).', '> '];
+  const recovered = harness({ tail: wrapped, terminals: [T], state,
+    now: new Date('2026-09-22T14:30:00Z') });
+  await tick({ dryRun: false }, recovered.deps);
+  assert.deepEqual(recovered.sent, [RESUME_TEXT]);
+  assert.equal(recovered.saved()[H].attempts, 1);
+  const next = harness({ tail: wrapped, terminals: [T], state: recovered.saved(),
+    now: new Date('2026-09-22T14:35:00Z') });
+  await tick({ dryRun: false }, next.deps);
+  assert.deepEqual(next.sent, []);
+});
+
+test('DOG-54: changed banner words still trigger the moved-later hold', async () => {
+  const original = 'Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).';
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: original,
+    detectedAt: '2026-09-22T06:33:00.000Z', resetAt: '2026-09-22T09:40:00.000Z',
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const changed = 'Claude usage limit reached. Your limit now resets at 5:40am (America/New_York).';
+  const h = harness({ tail: [changed, '> '], terminals: [T], state,
+    now: new Date('2026-09-22T14:30:00Z') });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].resetAt, '2026-09-23T09:40:00.000Z');
+});
+
 test('DOG-51: malformed or empty terminal list freezes stored events with one degraded warning', async () => {
   const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: BANNER,
     detectedAt: at(0).toISOString(), resetAt: at(0).toISOString(),
@@ -2513,6 +2639,70 @@ test('DOG-51: an identical limit banner still holds after a prior resume', async
   assert.deepEqual(h.sent, []);
   assert.equal(h.saved()[H].attempts, 1);
   assert.equal(h.saved()[H].resetAt, '2026-09-23T09:40:00.000Z');
+});
+
+test('DOG-55: a static relative banner sends after its original reset, retries, then gives up', async () => {
+  const original = 'Claude usage limit reached. Try again in 3 hours.';
+  const wrapped = ['Claude usage limit reached.', 'Try again in 3 hours.', '> '];
+  let state = {}, sends = 0;
+  const run = async (now, tail) => {
+    const h = harness({ tail, terminals: [T], state, now: new Date(now) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved(); sends += h.sent.length;
+  };
+  await run('2026-09-22T06:00:00Z', [original, '> ']);
+  assert.equal(state[H].resetAt, '2026-09-22T09:00:00.000Z');
+  await run('2026-09-22T09:02:00Z', wrapped);
+  assert.equal(sends, 1);
+  assert.equal(state[H].resetAt, '2026-09-22T09:00:00.000Z');
+  await run('2026-09-22T09:32:00Z', wrapped);
+  assert.equal(sends, 2);
+  await run('2026-09-22T10:02:00Z', wrapped);
+  assert.equal(sends, 3);
+  await run('2026-09-22T10:12:00Z', wrapped);
+  assert.equal(sends, SCHEDULE.limit.maxSends);
+  assert.equal(state[H].attempts, SCHEDULE.limit.maxSends);
+  assert.equal(state[H].status, 'gave_up');
+});
+
+test('DOG-55: a changed relative countdown still moves the reset later', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude',
+    bannerText: 'Claude usage limit reached. Try again in 3 hours.',
+    detectedAt: '2026-09-22T06:00:00.000Z', resetAt: '2026-09-22T09:00:00.000Z',
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const h = harness({ tail: ['Claude usage limit reached. Try again in 2 hours.', '> '],
+    terminals: [T], state, now: new Date('2026-09-22T09:02:00Z') });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].resetAt, '2026-09-22T11:02:00.000Z');
+});
+
+test('DOG-55 review F2: changed relative text after a send moves the reset later', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude',
+    bannerText: 'Claude usage limit reached. Try again in 3 hours.',
+    detectedAt: '2026-09-22T06:00:00.000Z', resetAt: '2026-09-22T09:00:00.000Z',
+    attempts: 1, lastAttemptAt: '2026-09-22T09:00:00.000Z', status: 'waiting' } };
+  const h = harness({ tail: ['Claude usage limit reached. Try again in 2 hours.', '> '],
+    terminals: [T], state, now: new Date('2026-09-22T09:32:00Z') });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].resetAt, '2026-09-22T11:32:00.000Z');
+  assert.equal(h.saved()[H].attempts, 1);
+});
+
+test('DOG-55 review F2: a counting-down relative banner still sends after the original reset', async () => {
+  let state = {};
+  const run = async (at, text) => {
+    const h = harness({ tail: [text, '> '], terminals: [T], state, now: new Date(at) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved();
+    return h.sent;
+  };
+  assert.deepEqual(await run('2026-09-22T06:00:00Z', 'Claude usage limit reached. Try again in 3h 8m.'), []);
+  assert.equal(state[H].resetAt, '2026-09-22T09:08:00.000Z');
+  assert.deepEqual(await run('2026-09-22T08:00:00Z', 'Claude usage limit reached. Try again in 1h 8m.'), []);
+  assert.deepEqual(await run('2026-09-22T09:10:00Z', 'Claude usage limit reached. Try again in 0m.'), [RESUME_TEXT]);
+  assert.equal(state[H].attempts, 1);
 });
 
 test('tick: an out-of-range reset banner creates an event with a fallback reset and does not throw (DOG-24)', async () => {

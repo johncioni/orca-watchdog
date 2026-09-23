@@ -2,6 +2,15 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-22: A limit's reset comes from its banner block
+
+`bannerText` (and so `resetAt`) is the run of consecutive relevant lines ending at
+the last relevant line; if that block has no clock, it widens to the nearest earlier
+reached line, skipping gap lines. Pre-send comparisons normalise ` | ` joins and
+whitespace (wrapping is not content). After a send, an unchanged relative banner is
+re-parsed against `detectedAt`, so it cannot drift later forever.
+PR: https://github.com/johncioni/orca-watchdog/pull/58
+
 ## 2026-09-22: An unsent limit event with an unchanged banner skips the moved-later hold
 
 The DOG-24 pre-send "reset moved later" hold is skipped only when the fresh banner
