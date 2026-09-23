@@ -225,6 +225,7 @@ const GRACE_PAST_MS = 2 * 60 * MIN; // absolute time this recently past = alread
 // than the stored one is honoured before a due send (DOG-24). Above any sub-tick
 // reparse jitter of a counting-down relative banner; only a real shift trips it.
 const RESET_REFRESH_MIN_MS = 5 * MIN;
+// Joins and whitespace runs are wrapping, not content (DOG-54).
 const normalizeBannerText = (text) => text.replace(/ \| /g, ' ').replace(/\s+/g, ' ').trim();
 // The 2026-09-22 Orca outage lasted about 7 hours. A missing handle cannot
 // send, so 12 hours tolerates that outage shape at the cost of slower cleanup.
@@ -498,7 +499,13 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
       isTrailingChromeAt(platform, window, l + 1 + offset, platformFooterStart))) {
       let start = l;
       while (start > 0 && isRelevant(window[start - 1], start - 1)) start--;
-      limit = { kind: 'limit', bannerText: sanitize(window.slice(start, l + 1).join(' | '), 600),
+      let from = start;
+      if (parseResetTime(window.slice(start, l + 1).join(' | '), now) === null) {
+        const r = lastIndex(window, (x, i) => i < start && isCoreEvidence(x, i) && reachedLine(x));
+        if (r >= 0) { from = r; while (from > 0 && isRelevant(window[from - 1], from - 1)) from--; }
+      }
+      const blockLines = window.slice(from, l + 1).filter((x, off) => isRelevant(x, from + off));
+      limit = { kind: 'limit', bannerText: sanitize(blockLines.join(' | '), 600),
         matchedLine: window[l], patternId: 'limit', index: l };
       // Gemini publishes an absolute reset clock and callers need the resolved
       // local instant; the trailing timezone abbreviation is intentionally ignored.

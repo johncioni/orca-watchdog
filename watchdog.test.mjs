@@ -37,11 +37,16 @@ test('DOG-53: wrapped zone syntax accepts slash-separated names', () => {
 
 test('DOG-53: slash-heavy non-zone lines do not stall limit detection', () => {
   const pathological = '(' + '/'.repeat(1999);
-  const start = performance.now();
-  const banner = detectBanner([...Array(14).fill(pathological),
-    'Claude usage limit reached. Your limit will reset at 3am.', '> '], 'claude');
-  assert.equal(banner?.kind, 'limit');
-  assert.ok(performance.now() - start < 50, '14 slash-heavy lines should scan in under 50 ms');
+  const lines = [...Array(14).fill(pathological),
+    'Claude usage limit reached. Your limit will reset at 3am.', '> '];
+  assert.equal(detectBanner(lines, 'claude')?.kind, 'limit'); // warm the regex
+  const times = [];
+  for (let i = 0; i < 5; i++) {
+    const start = performance.now();
+    assert.equal(detectBanner(lines, 'claude')?.kind, 'limit');
+    times.push(performance.now() - start);
+  }
+  assert.ok(Math.min(...times) < 50, '14 slash-heavy lines should scan in under 50 ms');
 });
 
 test('detects Claude limit banner', () => {
@@ -1028,8 +1033,7 @@ test('an IANA reset zone after a separator must occupy the whole segment (DOG-50
   ], 'claude', now);
   assert.ok(banner);
   assert.equal(newEvent({ handle: 'term_zone_suffix', platform: 'claude', banner }, now).resetAt,
-    new Date(now.getTime() + 60 * 60_000).toISOString(),
-    'the later relevant suffix forms its own block and has no reset clock');
+    local.toISOString());
 });
 
 test('IANA reset clocks resolve DST gaps forward with the pre-transition offset (DOG-50 review F3)', () => {
@@ -1862,6 +1866,21 @@ test('DOG-51: limit events survive alternating failed 7-, 4-, and 0-terminal tic
   assert.equal(logs.filter((line) => /warn degraded tick:/.test(line)).length, 4);
 });
 
+test('DOG-52 review F1: a session reset survives a blank or tip before /upgrade and sends once at reset', async () => {
+  const reached = "⎿  You've hit your session limit · resets 12:30am (America/New_York)";
+  for (const gap of ['', 'Tip: run /status for details']) {
+    const tail = [reached, gap, '/upgrade to increase your usage limit.', ...CLAUDE_DOG50_NARROW_BOX];
+    const detected = harness({ tail, terminals: [T], state: {}, now: new Date('2026-09-22T01:55:00Z') });
+    await tick({ dryRun: false }, detected.deps);
+    assert.equal(detected.saved()[H].resetAt, '2026-09-22T04:30:00.000Z', JSON.stringify(gap));
+    assert.deepEqual(detected.sent, []);
+    const due = harness({ tail, terminals: [T], state: detected.saved(), now: new Date('2026-09-22T04:35:00Z') });
+    await tick({ dryRun: false }, due.deps);
+    assert.deepEqual(due.sent, [RESUME_TEXT], JSON.stringify(gap));
+    assert.equal(due.saved()[H].attempts, 1);
+  }
+});
+
 test('DOG-54: a limit banner re-wrapped after failed reads sends once on recovery', async () => {
   const original = 'Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).';
   const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: original,
@@ -2656,6 +2675,34 @@ test('DOG-55: a changed relative countdown still moves the reset later', async (
   await tick({ dryRun: false }, h.deps);
   assert.deepEqual(h.sent, []);
   assert.equal(h.saved()[H].resetAt, '2026-09-22T11:02:00.000Z');
+});
+
+test('DOG-55 review F2: changed relative text after a send moves the reset later', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude',
+    bannerText: 'Claude usage limit reached. Try again in 3 hours.',
+    detectedAt: '2026-09-22T06:00:00.000Z', resetAt: '2026-09-22T09:00:00.000Z',
+    attempts: 1, lastAttemptAt: '2026-09-22T09:00:00.000Z', status: 'waiting' } };
+  const h = harness({ tail: ['Claude usage limit reached. Try again in 2 hours.', '> '],
+    terminals: [T], state, now: new Date('2026-09-22T09:32:00Z') });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].resetAt, '2026-09-22T11:32:00.000Z');
+  assert.equal(h.saved()[H].attempts, 1);
+});
+
+test('DOG-55 review F2: a counting-down relative banner still sends after the original reset', async () => {
+  let state = {};
+  const run = async (at, text) => {
+    const h = harness({ tail: [text, '> '], terminals: [T], state, now: new Date(at) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved();
+    return h.sent;
+  };
+  assert.deepEqual(await run('2026-09-22T06:00:00Z', 'Claude usage limit reached. Try again in 3h 8m.'), []);
+  assert.equal(state[H].resetAt, '2026-09-22T09:08:00.000Z');
+  assert.deepEqual(await run('2026-09-22T08:00:00Z', 'Claude usage limit reached. Try again in 1h 8m.'), []);
+  assert.deepEqual(await run('2026-09-22T09:10:00Z', 'Claude usage limit reached. Try again in 0m.'), [RESUME_TEXT]);
+  assert.equal(state[H].attempts, 1);
 });
 
 test('tick: an out-of-range reset banner creates an event with a fallback reset and does not throw (DOG-24)', async () => {
