@@ -225,6 +225,7 @@ const GRACE_PAST_MS = 2 * 60 * MIN; // absolute time this recently past = alread
 // than the stored one is honoured before a due send (DOG-24). Above any sub-tick
 // reparse jitter of a counting-down relative banner; only a real shift trips it.
 const RESET_REFRESH_MIN_MS = 5 * MIN;
+const normalizeBannerText = (text) => text.replace(/ \| /g, ' ').replace(/\s+/g, ' ').trim();
 // The 2026-09-22 Orca outage lasted about 7 hours. A missing handle cannot
 // send, so 12 hours tolerates that outage shape at the cost of slower cleanup.
 const VANISH_CONFIRM_MS = 12 * 60 * MIN;
@@ -1351,8 +1352,9 @@ export async function tick({ dryRun }, depsIn = {}) {
     // An unsent, unchanged banner still names the original reset; reparsing an
     // old clock after the 2-hour grace would roll it to tomorrow. After any
     // send, keep the shift guard even for identical text: the limit may persist.
+    const sameBannerText = normalizeBannerText(fresh.bannerText) === normalizeBannerText(ev.bannerText);
     if (ev.kind === 'limit'
-      && (fresh.bannerText !== ev.bannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
+      && (!sameBannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
       const freshReset = fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
       if (freshReset && freshReset.getTime() - new Date(ev.resetAt).getTime() >= RESET_REFRESH_MIN_MS) {
         ev.resetAt = freshReset.toISOString();

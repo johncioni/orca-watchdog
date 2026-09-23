@@ -1852,6 +1852,41 @@ test('DOG-51: limit events survive alternating failed 7-, 4-, and 0-terminal tic
   assert.equal(logs.filter((line) => /warn degraded tick:/.test(line)).length, 4);
 });
 
+test('DOG-54: a limit banner re-wrapped after failed reads sends once on recovery', async () => {
+  const original = 'Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).';
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: original,
+    detectedAt: '2026-09-22T06:33:00.000Z', resetAt: '2026-09-22T09:40:00.000Z',
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const failed = harness({ tail: [], terminals: [T], state, readThrows: true,
+    now: new Date('2026-09-22T09:45:00Z') });
+  await tick({ dryRun: false }, failed.deps);
+  assert.deepEqual(failed.sent, []);
+  const wrapped = ['Claude usage limit reached.',
+    'Your limit will reset at 5:40am (America/New_York).', '> '];
+  const recovered = harness({ tail: wrapped, terminals: [T], state,
+    now: new Date('2026-09-22T14:30:00Z') });
+  await tick({ dryRun: false }, recovered.deps);
+  assert.deepEqual(recovered.sent, [RESUME_TEXT]);
+  assert.equal(recovered.saved()[H].attempts, 1);
+  const next = harness({ tail: wrapped, terminals: [T], state: recovered.saved(),
+    now: new Date('2026-09-22T14:35:00Z') });
+  await tick({ dryRun: false }, next.deps);
+  assert.deepEqual(next.sent, []);
+});
+
+test('DOG-54: changed banner words still trigger the moved-later hold', async () => {
+  const original = 'Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).';
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: original,
+    detectedAt: '2026-09-22T06:33:00.000Z', resetAt: '2026-09-22T09:40:00.000Z',
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const changed = 'Claude usage limit reached. Your limit now resets at 5:40am (America/New_York).';
+  const h = harness({ tail: [changed, '> '], terminals: [T], state,
+    now: new Date('2026-09-22T14:30:00Z') });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].resetAt, '2026-09-23T09:40:00.000Z');
+});
+
 test('DOG-51: malformed or empty terminal list freezes stored events with one degraded warning', async () => {
   const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: BANNER,
     detectedAt: at(0).toISOString(), resetAt: at(0).toISOString(),
