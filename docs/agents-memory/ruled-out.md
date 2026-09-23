@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: Tier-2 degraded mode for Cursor and opencode
+
+Both are provider-agnostic: no status page to gate on and no absolute reset time, so
+Phase 5 of DOG-35 could only ever notify, never resume on its own. It was canceled with
+its spikes (DOG-45, DOG-46, DOG-47) before either agent's idle chrome was captured. The
+design stays in the multi-agent plan, section "Degraded mode (Tier-2)".
+PR: https://github.com/johncioni/orca-watchdog/pull/68
+
 ## 2026-09-23: A word boundary on `available` alone for DOG-59
 
 `\bavailable` fixed one of five shapes that revived a stale limit. `⎿` error and retry
