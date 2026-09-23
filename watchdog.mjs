@@ -473,7 +473,7 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
       const resetAt = parseResetTime(block, now)?.toISOString() ?? null;
       const kind = resetAt ? 'limit' : 'limit-open';
       codexLimit = { kind, resetAt, bannerText: sanitize(block, 600), matchedLine: window[c],
-        patternId: kind, index: resetAt ? end : c };
+        patternId: kind, index: resetAt ? end : c, reachedIndex: c };
       break;
     }
   }
@@ -526,7 +526,7 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
       }
       const blockLines = window.slice(from, l + 1).filter((x, off) => isRelevant(x, from + off));
       limit = { kind: 'limit', bannerText: sanitize(blockLines.join(' | '), 600),
-        matchedLine: window[l], patternId: 'limit', index: l };
+        matchedLine: window[l], patternId: 'limit', index: l, reachedIndex: r };
       // Gemini publishes an absolute reset clock and callers need the resolved
       // local instant; the trailing timezone abbreviation is intentionally ignored.
       if (platform === 'gemini') limit.resetAt = parseResetTime(limit.bannerText, now)?.toISOString() ?? null;
@@ -538,9 +538,9 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   // --- outage rule ---
   const outage = scanOutage(sourceWindow, window, platform, platformFooterStart).banner;
 
-  const pick = (limit && outage) ? (limit.index >= outage.index ? limit : outage) : (limit ?? outage);
+  const pick = (limit && outage) ? (limit.reachedIndex >= outage.index ? limit : outage) : (limit ?? outage);
   if (!pick) return null;
-  const { index, ...banner } = pick;
+  const { index, reachedIndex, ...banner } = pick;
   return banner;
 }
 

@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Treat an agent API outage printed below a limit's reached line as the newer event, even when text at or below the outage matches limit reset wording. (DOG-58)
+
 ## 1.2.7 - 2026-09-23
 
 ### Fixed

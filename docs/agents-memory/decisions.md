@@ -2,6 +2,15 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: Limit/outage arbitration uses the limit's reached line
+
+`pick` keeps a limit only if its reached line (`reachedIndex`) is at or below the
+detected outage; an outage printed after the limit was reached is the newer event.
+The old anchor, the last relevant line, let an error line carrying reset words
+(`Service Unavailable`) tie with the outage and revive a stale limit. Relies on
+chronological screen order.
+PR: https://github.com/johncioni/orca-watchdog/pull/62
+
 ## 2026-09-23: A new agent message makes an earlier limit banner stale
 
 Registry `chrome.outputStart` lists message-start markers (claude `⏺`, gemini `✦`,
