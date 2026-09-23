@@ -2,6 +2,13 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: A word boundary on `available` alone for DOG-59
+
+`\bavailable` fixed one of five shapes that revived a stale limit. `⎿` error and retry
+lines are trailing chrome, so they never trip the final-block guard, and `try again later`
+is reset wording by itself. The fix stales the limit on outage or retry lines instead.
+PR: https://github.com/johncioni/orca-watchdog/pull/64
+
 ## 2026-09-23: An exclusive fallback boundary at the marker line
 
 Treating the marker line as outside the older banner (`i > boundary`) dropped a banner
