@@ -806,12 +806,12 @@ test('ANSI-wrapped banner and chrome still match; ANSI-wrapped prose still does 
   assert.equal(detectBanner(['\x1b[31mI saw "API Error: 529" once\x1b[0m', '> '], 'claude'), null);
 });
 
-test('class precedence is chronological by last contributing line', () => {
+test('class precedence is chronological by the limit reached line (DOG-59)', () => {
   const limitLine = 'Claude usage limit reached.';
   const resetLine = 'Your limit will reset at 3am.';
   assert.equal(detectBanner([limitLine, resetLine, CLAUDE_529, '> '], 'claude').kind, 'outage');
   assert.equal(detectBanner([CLAUDE_529, limitLine, resetLine, '> '], 'claude').kind, 'limit');
-  assert.equal(detectBanner([limitLine, CLAUDE_529, resetLine, '> '], 'claude').kind, 'limit');
+  assert.equal(detectBanner([limitLine, CLAUDE_529, resetLine, '> '], 'claude'), null);
   assert.equal(detectBanner(['Session limit reached: API Error: 529 overloaded_error, try again later', '> '], 'claude').kind, 'limit');
 });
 
@@ -1911,6 +1911,80 @@ test('DOG-58: a limit reached after a Claude outage wins with its own reset cloc
   assert.equal(banner?.kind, 'limit');
   assert.equal(newEvent({ handle: H, platform: 'claude', banner }, now).resetAt,
     '2026-09-22T21:00:00.000Z');
+});
+
+const DOG59_NOW = new Date('2026-09-22T14:30:00Z');
+const DOG59_OLD = 'Claude usage limit reached. Your limit will reset at 9am (America/New_York).';
+const DOG59_CURRENT = 'Claude usage limit reached. Your limit will reset at 5pm (America/New_York).';
+const DOG59_RETRY = '⎿ Retrying in 5s… (attempt 2/10)';
+const DOG59_NEAR_MISSES = [
+  ['bare 503 retry', 'API Error: 503 Service Unavailable', DOG59_RETRY],
+  ['prefixed 503 retry', '⎿  API Error: 503 Service Unavailable', DOG59_RETRY],
+  ['combined 503 retry', '⎿  API Error (503 Service Unavailable) · Retrying in 5 seconds… (attempt 2/10)'],
+  ['503 final block', 'API Error: 503 Service Unavailable', 'try again later'],
+  ['prefixed 500 retry', '⎿  API Error: 500 Internal server error', DOG59_RETRY],
+  ['bare 500 retry', 'API Error: 500 Internal server error', DOG59_RETRY],
+];
+
+for (const [name, ...lines] of DOG59_NEAR_MISSES) {
+  test(`DOG-59: ${name} below an old limit leaves no banner`, () => {
+    assert.equal(detectBanner([DOG59_OLD, ...lines, ...CLAUDE_DOG50_NARROW_BOX], 'claude', DOG59_NOW), null);
+  });
+}
+
+test('DOG-59: bare 503 retry below an old limit leaves no unknown banner', () => {
+  assert.equal(detectBanner([DOG59_OLD, ...DOG59_NEAR_MISSES[0].slice(1), ...CHROME_TAIL],
+    'unknown', DOG59_NOW), null);
+});
+
+test('DOG-59: prefixed 503 retry stores nothing and sends nothing', async () => {
+  const tail = [DOG59_OLD, ...DOG59_NEAR_MISSES[1].slice(1), ...CLAUDE_DOG50_NARROW_BOX];
+  const h = harness({ tail, terminals: [T], state: {}, now: DOG59_NOW });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.saved(), {});
+  assert.deepEqual(h.sent, []);
+});
+
+test('DOG-59: an outage and retry above a current limit do not stale it', () => {
+  const banner = detectBanner(['API Error: 503 Service Unavailable', DOG59_RETRY,
+    DOG59_CURRENT, ...CLAUDE_DOG50_NARROW_BOX], 'claude', DOG59_NOW);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: H, platform: 'claude', banner }, DOG59_NOW).resetAt,
+    '2026-09-22T21:00:00.000Z');
+});
+
+test('DOG-59: current limit without an error is unchanged', () => {
+  const banner = detectBanner([DOG59_CURRENT, ...CLAUDE_DOG50_NARROW_BOX], 'claude', DOG59_NOW);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: H, platform: 'claude', banner }, DOG59_NOW).resetAt,
+    '2026-09-22T21:00:00.000Z');
+});
+
+test('DOG-59: available reset wording remains, but Unavailable is not reset wording', () => {
+  const reached = 'Claude usage limit reached.';
+  assert.equal(detectBanner([reached, 'usage is available again', ...CLAUDE_DOG50_NARROW_BOX],
+    'claude', DOG59_NOW)?.kind, 'limit');
+  assert.equal(detectBanner([reached, 'Service Unavailable', ...CLAUDE_DOG50_NARROW_BOX],
+    'claude', DOG59_NOW), null);
+});
+
+test('DOG-59: Codex limit reached below a Codex outage keeps the limit', () => {
+  const banner = detectBanner([CODEX_ERR,
+    "■ You've hit your usage limit. Try again at Sep 22nd, 2026 5:00 PM.",
+    '› Ask Codex to do anything'], 'codex', DOG59_NOW);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: H, platform: 'codex', banner }, DOG59_NOW).resetAt,
+    new Date(2026, 8, 22, 17, 0).toISOString());
+});
+
+test('DOG-59: a stored waiting limit upgrades to a newer outage without sending', async () => {
+  const old = newEvent({ handle: H, platform: 'claude',
+    banner: detectBanner([DOG59_CURRENT, ...CLAUDE_DOG50_NARROW_BOX], 'claude', DOG59_NOW) }, DOG59_NOW);
+  const tail = [DOG59_CURRENT, '⏺ API Error: 503 Service Unavailable', ...CLAUDE_DOG50_NARROW_BOX];
+  const h = harness({ tail, terminals: [T], state: { [H]: old }, now: DOG59_NOW });
+  await tick({ dryRun: false }, h.deps);
+  assert.equal(h.saved()[H].kind, 'outage');
+  assert.deepEqual(h.sent, []);
 });
 
 test('DOG-57: Gemini output followed by relevant prose makes an older limit stale', () => {
