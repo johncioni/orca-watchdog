@@ -495,7 +495,9 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     // box) is stale and must not re-fire a resume send (DOG-24).
     if (window.slice(l + 1).every((_line, offset) =>
       isTrailingChromeAt(platform, window, l + 1 + offset, platformFooterStart))) {
-      limit = { kind: 'limit', bannerText: sanitize(window.filter(isRelevant).join(' | '), 600),
+      let start = l;
+      while (start > 0 && isRelevant(window[start - 1], start - 1)) start--;
+      limit = { kind: 'limit', bannerText: sanitize(window.slice(start, l + 1).join(' | '), 600),
         matchedLine: window[l], patternId: 'limit', index: l };
       // Gemini publishes an absolute reset clock and callers need the resolved
       // local instant; the trailing timezone abbreviation is intentionally ignored.

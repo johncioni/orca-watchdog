@@ -50,6 +50,35 @@ test('detects Claude limit banner', () => {
   assert.match(b.bannerText, /usage limit reached/i);
 });
 
+test('DOG-52: an earlier available clock does not set a Claude banner reset', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const banner = detectBanner(['available at 9:00', 'ordinary output',
+    'Claude usage limit reached. Your limit will reset at 10am (America/New_York).', '> '], 'claude', now);
+  assert.equal(banner?.bannerText, 'Claude usage limit reached. Your limit will reset at 10am (America/New_York).');
+  assert.equal(newEvent({ handle: 'term_current', platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T14:00:00.000Z');
+});
+
+test('DOG-52: a newer banner takes its own reset after an older banner', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const banner = detectBanner([
+    'Claude usage limit reached. Your limit will reset at 9am (America/New_York).',
+    'ordinary output',
+    'Claude usage limit reached. Your limit will reset at 10am (America/New_York).', '> ',
+  ], 'claude', now);
+  assert.equal(newEvent({ handle: 'term_newer', platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T14:00:00.000Z');
+});
+
+test('DOG-52: a reached block without a reset clause uses the 60-minute default', () => {
+  const now = new Date('2026-09-22T06:00:00Z');
+  const banner = detectBanner(['available at 9:00', 'ordinary output',
+    'Claude usage limit reached.', '> '], 'claude', now);
+  assert.equal(banner?.bannerText, 'Claude usage limit reached.');
+  assert.equal(newEvent({ handle: 'term_default', platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T07:00:00.000Z');
+});
+
 test('detects Codex limit banner', () => {
   assert.ok(detectBanner(CODEX_BANNER));
 });
@@ -372,6 +401,23 @@ const CODEX_ERR = "■ We're currently experiencing high demand, which may cause
 const CODEX_FOOTER = 'Context 16% used · 5h 36% left · weekly 90% left · gpt-5.6-sol medium · main · Ready · Custom permissions';
 const CODEX_TAIL = ['─ Worked for 2m 51s ───────────', CODEX_ERR, '', '› Ask Codex to do anything', CODEX_FOOTER];
 const outageTail = (line) => ['some earlier output', line, ...CHROME_TAIL];
+
+test('DOG-52: existing Claude, Codex, and Gemini limit fixtures keep their reset instants', () => {
+  const fixtures = [
+    ['Claude classic', CLAUDE_BANNER, 'claude', new Date('2026-09-22T01:55:00Z'), '2026-09-22T07:00:00.000Z'],
+    ['Claude 5-hour', ['5-hour limit reached. Try again at 3pm.', '> '], 'claude',
+      new Date('2026-09-22T12:00:00'), new Date('2026-09-22T15:00:00').toISOString()],
+    ...CLAUDE_SESSION_LIMIT_CAPTURES.map(([name, tail]) =>
+      [`Claude session ${name}`, tail, 'claude', new Date('2026-09-22T01:55:00Z'), '2026-09-22T04:30:00.000Z']),
+    ['Codex', CODEX_BANNER, 'codex', new Date('2026-09-07T10:00:00'), new Date('2026-09-08T14:00:00').toISOString()],
+    ['Gemini', GEMINI_BANNER, 'gemini', new Date('2026-09-16T12:00:00Z'), '2026-09-16T23:00:00.000Z'],
+  ];
+  for (const [name, lines, platform, now, expected] of fixtures) {
+    const banner = detectBanner(lines, platform, now);
+    assert.equal(banner?.kind, 'limit', name);
+    assert.equal(newEvent({ handle: `term_${name}`, platform, banner }, now).resetAt, expected, name);
+  }
+});
 
 test('existing limit banners now carry kind "limit"', () => {
   assert.equal(detectBanner(CLAUDE_BANNER).kind, 'limit');
@@ -982,7 +1028,8 @@ test('an IANA reset zone after a separator must occupy the whole segment (DOG-50
   ], 'claude', now);
   assert.ok(banner);
   assert.equal(newEvent({ handle: 'term_zone_suffix', platform: 'claude', banner }, now).resetAt,
-    local.toISOString());
+    new Date(now.getTime() + 60 * 60_000).toISOString(),
+    'the later relevant suffix forms its own block and has no reset clock');
 });
 
 test('IANA reset clocks resolve DST gaps forward with the pre-transition offset (DOG-50 review F3)', () => {
