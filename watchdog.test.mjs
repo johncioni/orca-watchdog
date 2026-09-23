@@ -1965,6 +1965,21 @@ test('DOG-52 review F1: a session reset survives a blank or tip before /upgrade 
   }
 });
 
+test('DOG-57 review R2-F1: a marker on the reached line keeps the session reset and sends once at reset', async () => {
+  const reached = "⏺ You've hit your session limit · resets 12:30am (America/New_York)";
+  for (const gap of ['', 'Tip: run /status for details']) {
+    const tail = [reached, gap, '/upgrade to increase your usage limit.', ...CLAUDE_DOG50_NARROW_BOX];
+    const detected = harness({ tail, terminals: [T], state: {}, now: new Date('2026-09-22T01:55:00Z') });
+    await tick({ dryRun: false }, detected.deps);
+    assert.equal(detected.saved()[H].resetAt, '2026-09-22T04:30:00.000Z', JSON.stringify(gap));
+    assert.deepEqual(detected.sent, []);
+    const due = harness({ tail, terminals: [T], state: detected.saved(), now: new Date('2026-09-22T04:35:00Z') });
+    await tick({ dryRun: false }, due.deps);
+    assert.deepEqual(due.sent, [RESUME_TEXT], JSON.stringify(gap));
+    assert.equal(due.saved()[H].attempts, 1);
+  }
+});
+
 test('DOG-54: a limit banner re-wrapped after failed reads sends once on recovery', async () => {
   const original = 'Claude usage limit reached. Your limit will reset at 5:40am (America/New_York).';
   const state = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: original,

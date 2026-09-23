@@ -517,11 +517,11 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
       let from = start;
       if (parseResetTime(window.slice(start, l + 1).join(' | '), now) === null) {
         const boundary = lastIndex(window, (x, i) => i < start && isOutputStart(x));
-        const previousReached = lastIndex(window, (x, i) => i > boundary && i < start
+        const previousReached = lastIndex(window, (x, i) => i >= boundary && i < start
           && isCoreEvidence(x, i) && reachedLine(x));
         if (previousReached >= 0) {
           from = previousReached;
-          while (from > boundary + 1 && isRelevant(window[from - 1], from - 1)) from--;
+          while (from > Math.max(boundary, 0) && isRelevant(window[from - 1], from - 1)) from--;
         }
       }
       const blockLines = window.slice(from, l + 1).filter((x, off) => isRelevant(x, from + off));
