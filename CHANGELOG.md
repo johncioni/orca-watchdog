@@ -6,7 +6,7 @@ All notable changes to Orca Watchdog are documented here.
 
 ### Fixed
 
-- Treat a Claude API outage below a limit's reached line as the newer event, even when the outage text also matches limit reset evidence. (DOG-58)
+- Treat an agent API outage printed below a limit's reached line as the newer event, even when text at or below the outage matches limit reset wording. (DOG-58)
 
 ## 1.2.7 - 2026-09-23
 
