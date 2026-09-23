@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Re-baseline a limit event when a reprinted banner moves its reset later, so an unchanged relative clock stays fixed for later retries. (DOG-56)
+
 ## 1.2.9 - 2026-09-23
 
 ### Fixed
