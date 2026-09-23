@@ -1,11 +1,15 @@
-> **Status (2026-09-15):** approved 2026-09-11 (epic DOG-35). Phase 0 spike
-> DOG-36 done for Gemini (Orca `agentIdentity="gemini"`; idle box uses `▄`/`▀`
-> block borders + ` *   Type your message or @path/to/file` placeholder), Cursor
-> identity `"cursor"` (chrome pending auth), opencode blocked on install. Phase 1
-> DOG-37 merged as `933effc`. Copilot (P4) dropped for now. DOG-38 hardens the
-> registry contract before Phase 2. **Deploy note:** the live daemon is installed
-> via the Homebrew tap; deploy by cutting a release and `brew upgrade`, not by
-> running `install.sh` (see DOG-32). Original planning file:
+> **Status (2026-09-23): closed.** Epic DOG-35 is Done. Shipped: Phase 0 spike
+> DOG-36, Phase 1 registry refactor DOG-37 (`933effc`) with DOG-38 hardening,
+> Phase 2 status adapters DOG-39, Phase 3 Gemini CLI DOG-40 (plus DOG-41
+> zone-aware resets), Phase 6 docs DOG-42; released as 1.2.0 and 1.2.1. The
+> watchdog covers Claude Code, Codex, and Gemini. Dropped: Phase 4 (Copilot CLI),
+> before any ticket was opened, and on 2026-09-23 Phase 5 (Tier-2 degraded mode
+> for Cursor and opencode) with its spikes (DOG-45, DOG-46, DOG-47 canceled).
+> Cursor's identity (`"cursor"`) was captured but neither agent's idle chrome
+> was, so the Tier-2 sections below are an unimplemented design, not pending
+> work. **Deploy note:** the live daemon is installed via the Homebrew tap;
+> deploy by cutting a release and `brew upgrade`, not by running `install.sh`
+> (see DOG-32). Original planning file:
 > `~/.claude/plans/ok-let-s-discuss-the-wild-emerson.md`.
 
 # Plan: Extend the watchdog to all Orca-supported agent platforms
