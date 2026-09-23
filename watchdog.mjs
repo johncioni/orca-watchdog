@@ -54,6 +54,7 @@ const KINDS = Object.keys(SCHEDULE);
 //   fingerprint[]   — window regexes for identity routing.
 //   chrome.trailing — extra per-provider trailing-chrome lines.
 //   chrome.draft    — extra per-provider occupied-input lines.
+//   chrome.outputStart — per-provider new-message markers that stale prior limits.
 //   chrome.footerStart — optional structural input-box boundary markers.
 //   status          — provider health adapter config (env-overridable URL for the e2e stub).
 const freezeProvider = (provider) => {
@@ -121,6 +122,11 @@ export function defineProviders(entries) {
     draft.forEach((re, index) => {
       if (!(re instanceof RegExp)) invalid(`chrome.draft[${index}]`, 'must be a RegExp');
     });
+    const outputStart = chrome.outputStart ?? [];
+    if (!Array.isArray(outputStart)) invalid('chrome.outputStart', 'must be an array');
+    outputStart.forEach((re, index) => {
+      if (!(re instanceof RegExp)) invalid(`chrome.outputStart[${index}]`, 'must be a RegExp');
+    });
     const footerStart = chrome.footerStart ?? null;
     if (footerStart !== null) {
       if (!(footerStart?.prompt instanceof RegExp)) invalid('chrome.footerStart.prompt', 'must be a RegExp');
@@ -146,7 +152,7 @@ export function defineProviders(entries) {
         markers: [...row.envelope.markers], continuation: row.envelope.continuation == null
           ? null : { ...row.envelope.continuation } } })),
       fingerprint: [...fingerprint],
-      chrome: { ...chrome, trailing: [...trailing], draft: [...draft],
+      chrome: { ...chrome, trailing: [...trailing], draft: [...draft], outputStart: [...outputStart],
         footerStart: footerStart === null ? null : { ...footerStart } },
       status: { ...entry.status },
     });
@@ -172,6 +178,7 @@ export const PROVIDERS = defineProviders([
     ],
     fingerprint: [],
     chrome: {
+      outputStart: [/^⏺\s/],
       trailing: [
         /^✻ [A-Za-z]+ for \d+(?:h|m|s)(?: \d+(?:h|m|s)){0,2} · done \d{1,2}:\d{2} [AP]M$/,
         /^new task\? \/clear to save \d+(?:\.\d+)?k tokens$/,
@@ -193,7 +200,7 @@ export const PROVIDERS = defineProviders([
         envelope: { markers: [/^■\s*$/], continuation: null } },
     ],
     fingerprint: [],
-    chrome: { trailing: [] },
+    chrome: { trailing: [], outputStart: [] },
     status: { kind: 'statuspage', url: 'https://status.openai.com/api/v2/status.json' },
   },
   {
@@ -204,6 +211,7 @@ export const PROVIDERS = defineProviders([
     outage: [],
     fingerprint: [],
     chrome: {
+      outputStart: [/^✦\s/],
       trailing: [/^[▄▀\s]+$/, /^\*\s+Type your message or @path\/to\/file\s*$/],
       draft: [/^\*\s+(?!Type your message or @path\/to\/file\s*$)\S/],
     },
@@ -492,17 +500,29 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
         && CLOCK_AT_END_RE.test(previous) && isCoreEvidence(previous, i - 1);
     };
     const l = lastIndex(window, isRelevant);
+    const r = lastIndex(window, (x, i) => isCoreEvidence(x, i) && reachedLine(x));
+    const outputStart = platform === 'unknown' ? PROVIDERS.flatMap((p) => p.chrome.outputStart)
+      : providerFor(platform)?.chrome.outputStart ?? [];
+    const isOutputStart = (x) => outputStart.some((re) => re.test(x));
+    // A new message after the reached line makes the banner stale even when
+    // later prose contains reset words and becomes the last relevant line.
+    const stale = window.some((x, i) => i > r && beforeInputBox(x, i) && isOutputStart(x));
     // Same final-block guard the Codex limit and outage rules use: a banner the
     // agent already scrolled past (ordinary output between it and an idle empty
     // box) is stale and must not re-fire a resume send (DOG-24).
-    if (window.slice(l + 1).every((_line, offset) =>
+    if (!stale && window.slice(l + 1).every((_line, offset) =>
       isTrailingChromeAt(platform, window, l + 1 + offset, platformFooterStart))) {
       let start = l;
       while (start > 0 && isRelevant(window[start - 1], start - 1)) start--;
       let from = start;
       if (parseResetTime(window.slice(start, l + 1).join(' | '), now) === null) {
-        const r = lastIndex(window, (x, i) => i < start && isCoreEvidence(x, i) && reachedLine(x));
-        if (r >= 0) { from = r; while (from > 0 && isRelevant(window[from - 1], from - 1)) from--; }
+        const boundary = lastIndex(window, (x, i) => i < start && isOutputStart(x));
+        const previousReached = lastIndex(window, (x, i) => i >= boundary && i < start
+          && isCoreEvidence(x, i) && reachedLine(x));
+        if (previousReached >= 0) {
+          from = previousReached;
+          while (from > Math.max(boundary, 0) && isRelevant(window[from - 1], from - 1)) from--;
+        }
       }
       const blockLines = window.slice(from, l + 1).filter((x, off) => isRelevant(x, from + off));
       limit = { kind: 'limit', bannerText: sanitize(blockLines.join(' | '), 600),

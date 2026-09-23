@@ -2,6 +2,15 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: A new agent message makes an earlier limit banner stale
+
+Registry `chrome.outputStart` lists message-start markers (claude `⏺`, gemini `✦`,
+codex none; `unknown` uses all). A marker below the last reached line, above the input
+box, stales the limit. Plain prose does not, since Claude banners carry `Tip:` lines. The
+no-clock fallback stops at a marker; the marker line itself belongs to the message it
+starts. Staling a limit can hand `pick` to an outage below it; tests pin both.
+PR: https://github.com/johncioni/orca-watchdog/pull/60
+
 ## 2026-09-22: A limit's reset comes from its banner block
 
 `bannerText` (and so `resetAt`) is the run of consecutive relevant lines ending at

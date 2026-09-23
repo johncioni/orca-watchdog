@@ -2,6 +2,13 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: An exclusive fallback boundary at the marker line
+
+Treating the marker line as outside the older banner (`i > boundary`) dropped a banner
+whose reached line starts with `⏺`. The split-banner shape then fell to the 60-minute
+default and sent three resumes before the real reset. The bound is now `i >= boundary`.
+PR: https://github.com/johncioni/orca-watchdog/pull/60
+
 ## 2026-09-22: A strict banner block with no fallback
 
 Taking the reset only from the last consecutive block lost it when a blank or tip
