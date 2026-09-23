@@ -1387,10 +1387,11 @@ export async function tick({ dryRun }, depsIn = {}) {
       log('info', `removed ${ev.kind} on ${ev.handle}: replaced`);
       events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
     }
-    // An unsent, unchanged banner still names the original reset; reparsing an
-    // old clock after the 2-hour grace would roll it to tomorrow. After a send,
-    // unchanged relative text stays anchored to detection or the last accepted
-    // reset; absolute clocks still pass through the shift guard if the limit persists.
+    // An unsent, unchanged banner still names the last accepted reset;
+    // reparsing an old clock after the 2-hour grace would roll it to tomorrow.
+    // After a send, unchanged relative text stays anchored to detection or the
+    // last accepted reset; absolute clocks still pass through the shift guard
+    // because the limit may persist.
     const sameBannerText = normalizeBannerText(fresh.bannerText) === normalizeBannerText(ev.bannerText);
     if (ev.kind === 'limit'
       && (!sameBannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
