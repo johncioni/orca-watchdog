@@ -2,6 +2,15 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Scan wrapped IANA zone lines in linear time, including slash-heavy malformed lines. (DOG-53)
+- Parse generic limit resets from the last consecutive banner block, so an earlier clock cannot set the current reset. (DOG-52)
+- Treat line wrapping and whitespace changes as the same banner when checking a due limit. (DOG-54)
+- Keep an unchanged relative limit reset anchored to detection, allowing scheduled retries to reach their send cap. (DOG-55)
+
 ## 1.2.5 - 2026-09-22
 
 ### Fixed

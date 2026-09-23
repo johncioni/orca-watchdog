@@ -1100,6 +1100,16 @@ test('parses compact relative resets "in 3h 8m", "in 2h", "in 1hr 5m" (DOG-4)', 
   assert.equal(parseResetTime('resets in 45m', now).getTime(), now.getTime() + 45 * 60_000);
 });
 
+test('DOG-55: identifies the relative clauses parsed by parseResetTime', () => {
+  for (const text of ['resets in 3 days', 'resets in 2 hours 15 minutes',
+    'resets in 3h 8m', 'try again in 45 minutes']) {
+    assert.equal(watchdog.isRelativeReset?.(text), true, text);
+  }
+  for (const text of ['resets at 5pm', 'resets Sep 12 at 3pm']) {
+    assert.equal(watchdog.isRelativeReset?.(text), false, text);
+  }
+});
+
 test('parses multi-day and month-day resets instead of defaulting to today (DOG-5)', () => {
   const now = new Date('2026-09-07T10:00:00');
   assert.equal(parseResetTime('Weekly limit reached. Resets in 3 days.', now).getTime(), now.getTime() + 3 * 24 * 60 * 60_000);
@@ -2610,6 +2620,42 @@ test('DOG-51: an identical limit banner still holds after a prior resume', async
   assert.deepEqual(h.sent, []);
   assert.equal(h.saved()[H].attempts, 1);
   assert.equal(h.saved()[H].resetAt, '2026-09-23T09:40:00.000Z');
+});
+
+test('DOG-55: a static relative banner sends after its original reset, retries, then gives up', async () => {
+  const original = 'Claude usage limit reached. Try again in 3 hours.';
+  const wrapped = ['Claude usage limit reached.', 'Try again in 3 hours.', '> '];
+  let state = {}, sends = 0;
+  const run = async (now, tail) => {
+    const h = harness({ tail, terminals: [T], state, now: new Date(now) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved(); sends += h.sent.length;
+  };
+  await run('2026-09-22T06:00:00Z', [original, '> ']);
+  assert.equal(state[H].resetAt, '2026-09-22T09:00:00.000Z');
+  await run('2026-09-22T09:02:00Z', wrapped);
+  assert.equal(sends, 1);
+  assert.equal(state[H].resetAt, '2026-09-22T09:00:00.000Z');
+  await run('2026-09-22T09:32:00Z', wrapped);
+  assert.equal(sends, 2);
+  await run('2026-09-22T10:02:00Z', wrapped);
+  assert.equal(sends, 3);
+  await run('2026-09-22T10:12:00Z', wrapped);
+  assert.equal(sends, SCHEDULE.limit.maxSends);
+  assert.equal(state[H].attempts, SCHEDULE.limit.maxSends);
+  assert.equal(state[H].status, 'gave_up');
+});
+
+test('DOG-55: a changed relative countdown still moves the reset later', async () => {
+  const state = { [H]: { ...LIMIT_EV, platform: 'claude',
+    bannerText: 'Claude usage limit reached. Try again in 3 hours.',
+    detectedAt: '2026-09-22T06:00:00.000Z', resetAt: '2026-09-22T09:00:00.000Z',
+    attempts: 0, lastAttemptAt: null, status: 'waiting' } };
+  const h = harness({ tail: ['Claude usage limit reached. Try again in 2 hours.', '> '],
+    terminals: [T], state, now: new Date('2026-09-22T09:02:00Z') });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].resetAt, '2026-09-22T11:02:00.000Z');
 });
 
 test('tick: an out-of-range reset banner creates an event with a fallback reset and does not throw (DOG-24)', async () => {

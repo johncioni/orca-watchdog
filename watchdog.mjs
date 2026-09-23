@@ -717,19 +717,26 @@ function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
 // instant so callers' `?? fallback` / `?.toISOString()` engage instead of a
 // RangeError propagating up and aborting the whole tick (DOG-24).
 const validDate = (d) => Number.isFinite(d.getTime()) ? d : null;
+const REL_D_RE = /\bin\s+(\d+)\s+days?\b/i;
+const REL_HM_RE = /\bin\s+(\d+)\s*h(?:(?:ou)?rs?)?\b(?:\s*(?:and\s+)?(\d+)\s*m(?:in(?:ute)?s?)?)?/i;
+const REL_M_RE = /\bin\s+(\d+)\s*m(?:in(?:ute)?s?)?\b/i;
+
+export function isRelativeReset(text) {
+  return REL_D_RE.test(text) || REL_HM_RE.test(text) || REL_M_RE.test(text);
+}
 
 export function parseResetTime(text, now) {
   // "in 3 days" (weekly limits) — a day count, never a clock time.
-  const relD = text.match(/\bin\s+(\d+)\s+days?\b/i);
+  const relD = text.match(REL_D_RE);
   if (relD) return validDate(new Date(now.getTime() + Number(relD[1]) * 24 * 60 * MIN));
 
   // "in 2 hours 15 minutes", "in 2h 30m", "in 3h", "in 1hr 5m"
-  const relHM = text.match(/\bin\s+(\d+)\s*h(?:(?:ou)?rs?)?\b(?:\s*(?:and\s+)?(\d+)\s*m(?:in(?:ute)?s?)?)?/i);
+  const relHM = text.match(REL_HM_RE);
   if (relHM) {
     const mins = Number(relHM[1]) * 60 + Number(relHM[2] || 0);
     return validDate(new Date(now.getTime() + mins * MIN));
   }
-  const relM = text.match(/\bin\s+(\d+)\s*m(?:in(?:ute)?s?)?\b/i);
+  const relM = text.match(REL_M_RE);
   if (relM) return validDate(new Date(now.getTime() + Number(relM[1]) * MIN));
 
   const clock = parseClock(text);
@@ -1350,12 +1357,15 @@ export async function tick({ dryRun }, depsIn = {}) {
       events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
     }
     // An unsent, unchanged banner still names the original reset; reparsing an
-    // old clock after the 2-hour grace would roll it to tomorrow. After any
-    // send, keep the shift guard even for identical text: the limit may persist.
+    // old clock after the 2-hour grace would roll it to tomorrow. After a send,
+    // unchanged relative text stays anchored to detection; absolute clocks
+    // still pass through the shift guard because the limit may persist.
     const sameBannerText = normalizeBannerText(fresh.bannerText) === normalizeBannerText(ev.bannerText);
     if (ev.kind === 'limit'
       && (!sameBannerText || ev.attempts !== 0)) {                    // 3b. reset moved later
-      const freshReset = fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
+      const freshReset = sameBannerText && isRelativeReset(fresh.bannerText)
+        ? parseResetTime(fresh.bannerText, new Date(ev.detectedAt))
+        : fresh.resetAt ? new Date(fresh.resetAt) : parseResetTime(fresh.bannerText, now);
       if (freshReset && freshReset.getTime() - new Date(ev.resetAt).getTime() >= RESET_REFRESH_MIN_MS) {
         ev.resetAt = freshReset.toISOString();
         if (now - new Date(ev.resetAt) < SCHEDULE.limit.bufferMs) {
