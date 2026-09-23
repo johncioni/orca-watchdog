@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-09-23: An accepted later reset re-baselines the event's text and anchor
+
+When step 3b honours a moved reset and the text differs, it stores the fresh
+`bannerText` and `resetAnchorAt = now`; unchanged relative text re-parses from
+`resetAnchorAt ?? detectedAt`. The DOG-51 skip therefore compares against the last
+accepted text. Text identity is the only "unchanged" signal (known gaps: DOG-60).
+PR: https://github.com/johncioni/orca-watchdog/pull/66
+
 ## 2026-09-23: An outage or retry line below a limit's reached line makes it stale
 
 The DOG-57 `stale` check also fires on any `OUTAGE_PATTERNS` payload or `RETRY_RE` line
@@ -63,14 +71,6 @@ forward. In an overlap the pre-send re-parse always lands on the later occurrenc
 so the send waits for it (up to an hour late if the earlier one was meant; the safe
 direction). A wrapped zone line joins the banner only if it names a real zone and
 sits directly under a line ending in a clock.
-PR: https://github.com/johncioni/orca-watchdog/pull/54
-
-## 2026-09-22: `claude-agent-teams` is a Claude identity
-
-Coordinator terminals report `agentIdentity: claude-agent-teams`; it maps to the
-claude provider, and identity checks such as `isShellPrompt()` resolve through the
-registry instead of comparing against `'claude'`. Supersedes the earlier decision
-to leave it unmapped.
 PR: https://github.com/johncioni/orca-watchdog/pull/54
 
 ## 2026-09-22: Outage rows split payload from TUI envelope
