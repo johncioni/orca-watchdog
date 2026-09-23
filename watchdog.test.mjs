@@ -1861,6 +1861,58 @@ test('DOG-57: a marked outage after an old limit creates only an outage event', 
   assert.deepEqual(h.sent, []);
 });
 
+test('DOG-58: a Claude outage below a limit reached line wins with either reset clock', () => {
+  const now = new Date('2026-09-22T14:30:00Z');
+  for (const clock of ['9am', '5pm']) {
+    for (const line of [
+      'API Error: 503 Service Unavailable',
+      '⎿  API Error: 503 Service Unavailable',
+      '⏺ API Error: 503 Service Unavailable',
+      'API Error: 500 Internal server error',
+    ]) {
+      const tail = [
+        `Claude usage limit reached. Your limit will reset at ${clock} (America/New_York).`,
+        line,
+        ...CLAUDE_DOG50_NARROW_BOX,
+      ];
+      const banner = detectBanner(tail, 'claude', now);
+      assert.equal(banner?.kind, 'outage', `${clock}: ${line}`);
+      assert.equal(banner?.patternId, 'claude-api-error', `${clock}: ${line}`);
+      assert.equal(newEvent({ handle: H, platform: 'claude', banner }, now).resetAt,
+        '2026-09-22T14:40:00.000Z', `${clock}: ${line}`);
+    }
+  }
+});
+
+test('DOG-58: tick stores one outage and sends nothing for a past limit followed by bare 503', async () => {
+  const now = new Date('2026-09-22T14:30:00Z');
+  const tail = [
+    'Claude usage limit reached. Your limit will reset at 9am (America/New_York).',
+    'API Error: 503 Service Unavailable',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ];
+  const h = harness({ tail, terminals: [T], state: {}, now });
+  await tick({ dryRun: false }, h.deps);
+  const events = Object.values(h.saved());
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'outage');
+  assert.deepEqual(h.sent, []);
+});
+
+test('DOG-58: a limit reached after a Claude outage wins with its own reset clock', () => {
+  const now = new Date('2026-09-22T14:30:00Z');
+  const tail = [
+    'API Error: 503 Service Unavailable',
+    'ordinary output',
+    'Claude usage limit reached. Your limit will reset at 5pm (America/New_York).',
+    ...CLAUDE_DOG50_NARROW_BOX,
+  ];
+  const banner = detectBanner(tail, 'claude', now);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: H, platform: 'claude', banner }, now).resetAt,
+    '2026-09-22T21:00:00.000Z');
+});
+
 test('DOG-57: Gemini output followed by relevant prose makes an older limit stale', () => {
   const now = new Date('2026-09-16T12:00:00Z');
   for (const platform of ['gemini', 'unknown']) {
