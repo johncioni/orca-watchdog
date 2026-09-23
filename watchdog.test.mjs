@@ -1968,10 +1968,12 @@ test('DOG-59: available reset wording remains, but Unavailable is not reset word
     'claude', DOG59_NOW), null);
 });
 
-test('DOG-59: Codex limit reached below a Codex outage keeps the limit', () => {
-  const banner = detectBanner([CODEX_ERR,
+test('DOG-59: a Codex outage above a Codex limit is a final-block near miss, so the limit stands', () => {
+  const lines = [CODEX_ERR,
     "■ You've hit your usage limit. Try again at Sep 22nd, 2026 5:00 PM.",
-    '› Ask Codex to do anything'], 'codex', DOG59_NOW);
+    '› Ask Codex to do anything'];
+  assert.equal(watchdog.classifyOutageNearMiss(lines, 'codex'), 'final-block');
+  const banner = detectBanner(lines, 'codex', DOG59_NOW);
   assert.equal(banner?.kind, 'limit');
   assert.equal(newEvent({ handle: H, platform: 'codex', banner }, DOG59_NOW).resetAt,
     new Date(2026, 8, 22, 17, 0).toISOString());

@@ -504,8 +504,9 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     const outputStart = platform === 'unknown' ? PROVIDERS.flatMap((p) => p.chrome.outputStart)
       : providerFor(platform)?.chrome.outputStart ?? [];
     const isOutputStart = (x) => outputStart.some((re) => re.test(x));
-    // A new message, API outage, or retry after the reached line means the
-    // agent made progress beyond this limit banner.
+    // A new message, API outage, or retry after the reached line stales the limit.
+    // Key on the reached line: later prose with reset words can become the last
+    // relevant line without making the old banner current.
     const stale = window.some((x, i) => i > r && beforeInputBox(x, i)
       && (isOutputStart(x) || OUTAGE_PATTERNS.some((pattern) => testPattern(pattern.re, x))
         || RETRY_RE.test(x)));
