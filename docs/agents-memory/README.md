@@ -9,11 +9,13 @@ shared by every harness and every worktree. Rules live in
 - `ruled-out.md`: approaches tried and abandoned, and why.
 
 **Read both before the first edit** of any task. **Only the orchestrator
-writes here**, once per task: after the review round passes and before the
-merge, it promotes the task's decisions and ruled-out approaches as one
-docs-only commit on the feature branch. Implementers never edit this
-directory; they list durable learnings under a "Memory candidates" heading
-in the deliverable summary instead.
+writes here**, in one memory PR per wave (a task outside a plan is its own
+wave): after the wave's task PRs merge, it promotes their decisions and
+ruled-out approaches in a PR that touches nothing else. This directory is
+in `.github/review-invariants.txt`, so that PR never skips review; the
+spec/plan reviewer reviews it at high. Task PRs carry no memory edits.
+Implementers never edit this directory; they list durable learnings under a
+"Memory candidates" heading in the deliverable summary instead.
 
 Entry format, newest first:
 

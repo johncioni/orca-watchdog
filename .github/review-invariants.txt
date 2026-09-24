@@ -9,3 +9,4 @@ orca.yaml
 scripts/orca-setup.sh
 .github/*
 CLAUDE.md
+docs/agents-memory/*
