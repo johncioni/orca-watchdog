@@ -43,10 +43,9 @@ Linear team **Orca Watchdog**, key `DOG`, workspace `johncioni`.
 
 ## Working agreement
 
-- **Roles, models, effort levels, and the review loop are universal:** see
-  `~/.agents/MODELS.md` (role table with default model + effort per role, the
-  orchestrator's per-dispatch selection rule, escalation, and the review
-  loop). This file adds only project-specific rules.
+- Launch recipes, terminal hygiene, and worker supervision live in
+  `~/.agents/ORCHESTRATION.md`; roles, models, effort, and the review loop in
+  `~/.agents/MODELS.md`. This file adds only project-specific rules.
 - **Proceed autonomously on clear next steps.** When a step finishes and the
   next action is well-defined and low-ambiguity — merging an approved /
   CI-green PR, advancing to the next task in an approved plan, running the
@@ -62,8 +61,6 @@ Linear team **Orca Watchdog**, key `DOG`, workspace `johncioni`.
   session); or (d) there's a **genuine decision or ambiguity** — scope,
   design direction, or the "next step" isn't actually clear. When you do
   proceed, state what you did and why in one line so he can course-correct.
-- **Docfix engine:** `scripts/docfix.sh` is not ported here yet — port it
-  when first needed (engine chain is defined in `~/.agents/MODELS.md`).
 
 ## Build / run / test
 
@@ -95,13 +92,6 @@ force-push (decision 2026-08-30).
 
 ## Orca (the ADE this project lives in)
 
-- The **main worktree is the orchestration hub** (specs, plans, Linear,
-  reviews, post-merge deploy) — no implementation happens there.
-- **Each implementation plan gets its own Orca child worktree**
-  (`orca worktree create --name <plan> --parent-worktree active --agent codex
-  --prompt "<brief>" --linear-issue DOG-<n>`); the implementer works in the
-  child; the code reviewer (a new Orca terminal in that same worktree)
-  reviews between tasks, and the orchestrator adjudicates.
 - New worktrees run `scripts/orca-setup.sh` (node floor, syntax checks,
   `node --test`; idempotent, offline, safe by hand). The committed
   `orca.yaml` wires it as the repo's setup hook (plus the archive hook and
@@ -114,16 +104,6 @@ force-push (decision 2026-08-30).
 - **Implementers verify with `--dry-run` and the fakes in `e2e/`** (fake
   TUI, loopback status stub), never against live agent terminals, and
   never by running `install.sh` from a worktree (see Safety).
-- **Terminal hygiene:** Orca never auto-closes terminals. Default to one
-  persistent agent terminal per worktree/plan (send successive briefs via
-  `orca terminal send`). If a stage needs an isolated terminal, close it
-  after harvesting the result (`orca terminal close`); at plan completion,
-  sweep `orca terminal list` and close everything but the live agent
-  terminal.
-- **Credential guardrail:** agents never search credential stores
-  (1Password, keychains, browser vaults) or mint/borrow tokens. If an
-  operation fails for lack of a credential or scope, stop and escalate to
-  the human with exactly what is needed and why.
 
 ## Linear
 
