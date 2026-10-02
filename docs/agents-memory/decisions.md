@@ -61,9 +61,9 @@ PR: https://github.com/johncioni/orca-watchdog/pull/56
 ## 2026-09-22: Reset clocks honour a parenthesised IANA zone
 
 `resets 12:30am (America/New_York)` resolves in that zone; an invalid zone
-falls back to local time. In a DST overlap the later occurrence wins, the
-safe direction: a send can be up to an hour late, never early. A wrapped
-zone line joins only if it is a real zone under a line ending in a clock.
+falls back to local time. In a DST overlap the parser takes the earlier
+occurrence while it is ahead, and since an unsent, unchanged banner skips
+the moved-later hold (#56), a first send can land before the later one.
 PR: https://github.com/johncioni/orca-watchdog/pull/54
 
 ## 2026-09-22: Outage rows split payload from TUI envelope

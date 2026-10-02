@@ -58,11 +58,10 @@ PR: https://github.com/johncioni/orca-watchdog/pull/52
 
 ## 2026-09-22: Content-pinned claude-hud statusline regexes as trailing chrome
 
-Nine anchored patterns matched only the narrow Fable layout; the wide Opus layout
-uses other separators and segments, and the outage went undetected. Treating the
-split `Usage … (resets in …)` line as chrome while it stayed limit evidence also
-made a resume fire at the footer's time, not the banner's. Replaced by the
-structural input-box rule (see decisions.md).
+Nine anchored patterns matched only the narrow Fable layout, so on the wide Opus
+layout the outage went undetected. Treating the split `Usage … (resets in …)` line
+as chrome while it stayed limit evidence also made a resume fire at the footer's
+time, not the banner's. Replaced by the input-box rule (decisions.md).
 PR: https://github.com/johncioni/orca-watchdog/pull/50
 
 ## 2026-09-22: Fixing only the `⏺` glyph for DOG-48
