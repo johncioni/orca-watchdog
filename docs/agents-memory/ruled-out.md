@@ -19,9 +19,9 @@ PR: https://github.com/johncioni/orca-watchdog/pull/64
 
 ## 2026-09-23: An exclusive fallback boundary at the marker line
 
-Treating the marker line as outside the older banner (`i > boundary`) dropped a banner
-whose reached line starts with `⏺`. The split-banner shape then fell to the 60-minute
-default and sent three resumes before the real reset. The bound is now `i >= boundary`.
+Treating the marker line as outside the older banner dropped a banner whose reached
+line starts with `⏺`. The split banner then fell to the 60-minute default and sent
+three resumes before the real reset. The marker line now belongs to the older banner.
 PR: https://github.com/johncioni/orca-watchdog/pull/60
 
 ## 2026-09-22: A strict banner block with no fallback
@@ -58,12 +58,10 @@ PR: https://github.com/johncioni/orca-watchdog/pull/52
 
 ## 2026-09-22: Content-pinned claude-hud statusline regexes as trailing chrome
 
-Nine anchored patterns matched the narrow Fable layout (`[Fable 5.1 ◔ medium]`,
-`Context █░░░ 24%`, `2 CLAUDE.md | 15 hooks`, ...). The wide Opus layout joins
-segments with ` │ `, uses `◕`, adds `| 1 MCPs |`, and the outage went undetected.
-Worse, treating the split `Usage … (resets in …)` line as chrome while it stayed
-limit evidence made a limit resume fire at the footer's time, not the banner's.
-Replaced by the structural input-box rule (see decisions.md).
+Nine anchored patterns matched only the narrow Fable layout, so on the wide Opus
+layout the outage went undetected. Treating the split `Usage … (resets in …)` line
+as chrome while it stayed limit evidence also made a resume fire at the footer's
+time, not the banner's. Replaced by the input-box rule (decisions.md).
 PR: https://github.com/johncioni/orca-watchdog/pull/50
 
 ## 2026-09-22: Fixing only the `⏺` glyph for DOG-48
