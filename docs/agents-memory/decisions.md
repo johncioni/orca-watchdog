@@ -45,9 +45,9 @@ PR: https://github.com/johncioni/orca-watchdog/pull/58
 ## 2026-09-22: An unsent limit event with an unchanged banner skips the moved-later hold
 
 Before the first send, identical banner text skips the "reset moved later"
-hold, so a limit resumes once reads recover, however long they were down.
-After a send, identical text keeps the hold: a limit that has not really
-reset reprints the same banner. John chose this over a docs-only caveat.
+hold, so a limit resumes once reads recover (John chose this over a docs-only
+caveat). After a send, an identical absolute clock keeps the hold, since a
+limit that has not reset reprints it; identical relative text stays anchored.
 PR: https://github.com/johncioni/orca-watchdog/pull/56
 
 ## 2026-09-22: Orca list and read results are weak evidence of a closed terminal
