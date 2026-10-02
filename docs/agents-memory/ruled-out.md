@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-10-02: Fixing DOG-60's relative-clock re-anchoring gaps
+
+Every captured limit banner (Claude, Codex, Gemini) states an absolute clock. An early
+third send on an identical reprint and an endless hold on alternating banners both need
+relative wording no agent prints; a send ~21 h late needs a screen that reverts to an older
+banner. None has been seen, so a send-path fix would have nothing real to test against.
+PR: https://linear.app/johncioni/issue/DOG-60
+
 ## 2026-09-23: Tier-2 degraded mode for Cursor and opencode
 
 Canceled with its spikes (DOG-45, DOG-46, DOG-47) because John doesn't use Cursor or

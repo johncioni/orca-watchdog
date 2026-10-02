@@ -7,7 +7,7 @@ Newest first. Format and rules: `README.md` in this directory.
 When a moved-later reset is honoured with different text, the event stores
 the fresh banner text and re-anchors relative resets to that moment
 (`resetAnchorAt`), so later "unchanged" checks compare against the last
-accepted text. Text identity is the only "unchanged" signal (gaps: DOG-60).
+accepted text. Text identity is the only "unchanged" signal (open gaps: ruled-out.md).
 PR: https://github.com/johncioni/orca-watchdog/pull/66
 
 ## 2026-09-23: An outage or retry line below a limit's reached line makes it stale
