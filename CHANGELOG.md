@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.11 - 2026-10-02
+
+### Fixed
+
+- Resolve a reset clock that falls in a DST fall-back hour, such as `1:30am (America/New_York)` on the first Sunday of November, to the later occurrence, so the first resume never goes out before the reset. (DOG-61)
+
 ## 1.2.10 - 2026-09-23
 
 ### Fixed
