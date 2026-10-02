@@ -718,9 +718,7 @@ function ianaClockToDate(h, m, timeZone, now, monthDay = null) {
         && parts.hour === h && parts.minute === m;
     }).sort((a, b) => a - b);
     if (matches.length > 0) {
-      const instant = matches.length > 1 && matches[0] <= now.getTime()
-        ? matches[matches.length - 1] : matches[0];
-      return new Date(instant);
+      return new Date(matches[matches.length - 1]);
     }
     // A nonexistent wall time is moved forward by the size of the DST gap,
     // matching Temporal's "compatible" disambiguation.

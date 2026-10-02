@@ -1058,6 +1058,20 @@ test('IANA reset clocks choose the later overlap occurrence when the earlier one
   );
 });
 
+test('DOG-61: IANA reset clocks always choose the later overlap occurrence', () => {
+  for (const [text, now] of [
+    ['resets 1:30am (America/New_York)', '2026-10-31T12:00:00Z'],
+    ['resets 1:30am (America/New_York)', '2026-11-01T04:00:00Z'],
+    ['resets 1:30am (America/New_York)', '2026-11-01T05:10:00Z'],
+    ['resets 1:30am (America/New_York)', '2026-11-01T05:32:00Z'],
+    ['resets 1:30am (America/New_York)', '2026-11-01T06:10:00Z'],
+    ['resets Nov 1 at 1:30am (America/New_York)', '2026-10-30T12:00:00Z'],
+  ]) {
+    assert.equal(parseResetTime(text, new Date(now)).toISOString(),
+      '2026-11-01T06:30:00.000Z', `${text} at ${now}`);
+  }
+});
+
 test('unknown or nonadjacent zone abbreviations leave the local clock unchanged (DOG-41)', () => {
   const now = new Date('2026-09-16T12:00:00Z');
   const local = parseResetTime('3:00 PM', now).toISOString();
@@ -2138,6 +2152,22 @@ test('DOG-54: a limit banner re-wrapped after failed reads sends once on recover
     now: new Date('2026-09-22T14:35:00Z') });
   await tick({ dryRun: false }, next.deps);
   assert.deepEqual(next.sent, []);
+});
+
+test('DOG-61: an unsent limit with an unchanged overlap banner waits for the later reset', async () => {
+  const detectedAt = new Date('2026-11-01T04:00:00Z');
+  const tail = ['Claude usage limit reached. Your limit will reset at 1:30am (America/New_York).', '> '];
+  const banner = detectBanner(tail, 'claude', detectedAt);
+  assert.equal(banner?.kind, 'limit');
+  const state = { [H]: { ...LIMIT_EV,
+    ...newEvent({ handle: H, platform: 'claude', banner }, detectedAt), attempts: 0 } };
+  const early = harness({ tail, terminals: [T], state, now: new Date('2026-11-01T05:32:00Z') });
+  await tick({ dryRun: false }, early.deps);
+  assert.deepEqual(early.sent, []);
+  const due = harness({ tail, terminals: [T], state: early.saved(), now: new Date('2026-11-01T06:33:00Z') });
+  await tick({ dryRun: false }, due.deps);
+  assert.deepEqual(due.sent, [RESUME_TEXT]);
+  assert.equal(due.saved()[H].attempts, 1);
 });
 
 test('DOG-54: changed banner words still trigger the moved-later hold', async () => {
