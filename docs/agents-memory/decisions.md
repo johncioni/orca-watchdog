@@ -7,7 +7,7 @@ Newest first. Format and rules: `README.md` in this directory.
 When a moved-later reset is honoured with different text, the event stores
 the fresh banner text and re-anchors relative resets to that moment
 (`resetAnchorAt`), so later "unchanged" checks compare against the last
-accepted text. Text identity is the only "unchanged" signal (gaps: DOG-60).
+accepted text. Text identity is the only "unchanged" signal (open gaps: ruled-out.md).
 PR: https://github.com/johncioni/orca-watchdog/pull/66
 
 ## 2026-09-23: An outage or retry line below a limit's reached line makes it stale
@@ -45,9 +45,9 @@ PR: https://github.com/johncioni/orca-watchdog/pull/58
 ## 2026-09-22: An unsent limit event with an unchanged banner skips the moved-later hold
 
 Before the first send, identical banner text skips the "reset moved later"
-hold, so a limit resumes once reads recover, however long they were down.
-After a send, identical text keeps the hold: a limit that has not really
-reset reprints the same banner. John chose this over a docs-only caveat.
+hold, so a limit resumes once reads recover (John chose this over a docs-only
+caveat). After a send, an identical absolute clock keeps the hold, since a
+limit that has not reset reprints it; identical relative text stays anchored.
 PR: https://github.com/johncioni/orca-watchdog/pull/56
 
 ## 2026-09-22: Orca list and read results are weak evidence of a closed terminal
