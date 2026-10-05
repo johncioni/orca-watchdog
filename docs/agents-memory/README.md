@@ -9,17 +9,17 @@ shared by every harness and every worktree. Rules live in
 - `ruled-out.md`: approaches tried and abandoned, and why.
 
 **Read both before the first edit** of any task. **Only the orchestrator
-writes here**, in reviewed memory PRs that touch nothing else. It captures
-each task's deliverable summary and `HANDOFF.md` into
-`.superpowers/memory-queue/<task>/` in the main checkout, and a task is
-ready once it merges or closes. A plan's wave gets one memory PR after its
-task PRs merge, and that PR takes every ready task. A task outside a plan
-waits for the next memory PR, which opens once three tasks are ready or
-the oldest has waited 14 days. A ready task with nothing durable is
-retired in the queue's `retired.log`, with no PR. The repo's
-`.github/review-invariants.txt` must list this directory, so a memory PR
-never skips review; the spec/plan reviewer reviews it at high. Task PRs
-carry no memory edits. Implementers never edit this directory; they list durable
+writes here**, in reviewed memory PRs. It captures each task's summaries
+into the repo's memory queue and adjudicates ready tasks in batches: when a
+plan's wave finishes, once three or more are ready, when the oldest has been
+ready for 14 days, or sooner when one matters to work about to start. Tasks
+with durable material go into one memory PR that touches only this
+directory; a task with nothing durable is retired in the queue's
+`retired.log` without a PR. Policy, sandbox and harness material goes to
+orca-ops' `docs/policy-memory/` instead. The repo's
+`.github/review-invariants.txt` must list this directory, so that PR never
+skips review; the spec/plan reviewer reviews it at high. Task PRs carry no
+memory edits. Implementers never edit this directory; they list durable
 learnings under a "Memory candidates" heading in the deliverable summary
 instead.
 
