@@ -7,8 +7,7 @@ agents read `AGENTS.md`, which is a symlink to this file. Keep it that way.
 
 `docs/agents-memory/` is the durable, cross-agent memory for this repo
 (rules: `~/.agents/MODELS.md`, "Project memory"). Read both files before the
-first edit. Only the orchestrator writes there, in one reviewed memory PR
-per wave.
+first edit. Only the orchestrator writes there, in reviewed memory PRs.
 
 @docs/agents-memory/decisions.md
 @docs/agents-memory/ruled-out.md
