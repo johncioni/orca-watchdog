@@ -5,9 +5,10 @@ Newest first. Format and rules: `README.md` in this directory.
 ## 2026-10-02: Fixing DOG-60's relative-clock re-anchoring gaps
 
 Every captured limit banner (Claude, Codex, Gemini) states an absolute clock, so the early
-third send on an identical reprint, which needs relative wording, cannot happen today. An
-endless hold (two banners alternating with the ticks, absolute ones included) and a send ~21 h
-late (a screen reverting to an older banner) need screens never seen; nothing real to test.
+third send on an identical reprint, which needs relative wording, could not happen as of
+that date. An endless hold (two banners alternating with the ticks, absolute ones included)
+and a send ~21 h late (a screen reverting to an older banner) need screens never seen;
+nothing real to test.
 PR: https://linear.app/johncioni/issue/DOG-60
 
 ## 2026-09-23: Tier-2 degraded mode for Cursor and opencode

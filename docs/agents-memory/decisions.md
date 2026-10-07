@@ -15,7 +15,9 @@ PR: https://github.com/johncioni/orca-watchdog/pull/66
 A request after the banner means the limit is no longer current, so an
 outage payload or retry line below the reached line, above the input box,
 stales it. The payload check runs on every platform, so a new provider
-outage row widens it: rerun a main-vs-HEAD differential then.
+outage row widens it. Then compare the change against the last release on
+recorded and fuzzed screens, as PR #64's review did: no screen may gain a
+detection.
 PR: https://github.com/johncioni/orca-watchdog/pull/64
 
 ## 2026-09-23: Limit/outage arbitration uses the limit's reached line
