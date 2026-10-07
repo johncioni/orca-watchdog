@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.12 - 2026-10-07
+
+### Changed
+
+- Log why an Orca terminal read, idle wait or resume send failed: a timeout, signal or exit code, how long the call took, and sanitized stderr, instead of the redacted command line. (DOG-62)
+
 ## 1.2.11 - 2026-10-02
 
 ### Fixed
