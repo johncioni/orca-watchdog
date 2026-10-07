@@ -12,10 +12,10 @@ PR: https://github.com/johncioni/orca-watchdog/pull/66
 
 ## 2026-09-23: An outage or retry line below a limit's reached line makes it stale
 
-A request after the banner means the limit is no longer current, so an
-outage payload or retry line below the reached line, above the input box,
-stales it. The payload check runs on every platform, so a new provider
-outage row widens it: rerun a main-vs-HEAD differential then.
+A request after the banner means the limit is no longer current, so an outage payload or
+retry line below the reached line, above the input box, stales it. That check runs on every
+platform, so a new outage row also stales limits: replay recorded and fuzzed screens against
+the last release by hand, as PR #64 did, and expect no gains beyond the new row's outages.
 PR: https://github.com/johncioni/orca-watchdog/pull/64
 
 ## 2026-09-23: Limit/outage arbitration uses the limit's reached line
