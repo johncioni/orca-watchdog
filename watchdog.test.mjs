@@ -3412,6 +3412,72 @@ test('DOG-49 tick debug log names the near-miss blocker and sanitizes terminal t
   }
 });
 
+function nodeExecError(fields = {}) {
+  return Object.assign(new Error('Command failed: /x/orca terminal read --terminal term_abc --json\n'),
+    { code: 1, signal: null, killed: false, stdout: '', stderr: '', ...fields });
+}
+
+test('DOG-62: describeOrcaError explains exec failures without the command line', () => {
+  const cases = [
+    [{ code: null, signal: 'SIGTERM', killed: true, elapsedMs: 15_000 }, 'timed out after 15.0s (SIGTERM); no output'],
+    [{ code: null, signal: 'SIGKILL', elapsedMs: 400 }, 'killed by SIGKILL after 0.4s; no output'],
+    [{ elapsedMs: 400 }, 'exit 1 after 0.4s; no output'],
+    [{ elapsedMs: 400, stderr: 'socket closed\n token=fixture-secret-value\tplease retry' },
+      'exit 1 after 0.4s; stderr: socket closed token=[redacted] please retry'],
+    [{}, 'exit 1; no output'],
+    [{ code: null, signal: 'SIGTERM', killed: true }, 'timed out (SIGTERM); no output'],
+    [{ code: null, signal: 'SIGKILL' }, 'killed by SIGKILL; no output'],
+    [{ elapsedMs: NaN }, 'exit 1; no output'],
+    [{ elapsedMs: Infinity }, 'exit 1; no output'],
+  ];
+  for (const [fields, expected] of cases) {
+    const description = watchdog.describeOrcaError(nodeExecError(fields));
+    assert.equal(description, expected);
+    assert.doesNotMatch(description, /Command failed|terminal read|[\r\n]|fixture-secret-value/);
+    if (!Number.isFinite(fields.elapsedMs)) assert.doesNotMatch(description, / after /);
+  }
+});
+
+test('DOG-62: describeOrcaError preserves plain, structured and spawn error messages', () => {
+  for (const e of [
+    new Error('Command failed: agent_prompt_stalled'),
+    new Error('terminal read returned no tail array'),
+    Object.assign(new Error('socket\n unavailable token=fixture-secret-value'), { code: 'runtime_unavailable' }),
+    Object.assign(new Error('spawn /x/orca ENOENT'), { code: 'ENOENT' }),
+  ]) {
+    assert.equal(watchdog.describeOrcaError(e), sanitize(e.message));
+  }
+});
+
+test('DOG-62: orca() records elapsed time without changing exec failure classification', async () => {
+  const error = nodeExecError();
+  const originalMessage = error.message;
+  const badExec = async () => { throw error; };
+  await assert.rejects(watchdog.orca(['terminal', 'read', '--terminal', H], badExec), (e) => {
+    assert.equal(e, error);
+    assert.equal(e.message, originalMessage);
+    assert.equal(isUnavailableError(e), true);
+    assert.equal(Number.isFinite(e.elapsedMs), true);
+    assert.ok(e.elapsedMs >= 0);
+    return true;
+  });
+});
+
+test('DOG-62: tick logs a read exit failure without the command line', async () => {
+  const h = harness({ tail: [], terminals: [T] });
+  const logs = [];
+  const originalOrca = h.deps.orca;
+  h.deps.orca = async (args) => {
+    if (args[1] === 'read') throw nodeExecError({ elapsedMs: 400 });
+    return originalOrca(args);
+  };
+  h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+  await tick({ dryRun: false }, h.deps);
+  const line = logs.find((entry) => entry.startsWith(`warn read failed for ${H}: exit 1`));
+  assert.ok(line, logs.join('\n'));
+  assert.doesNotMatch(line, /Command failed|terminal read/);
+});
+
 test('orca(): malformed JSON stdout becomes an unavailable error, not an unhandled throw (DOG-24)', async () => {
   const badExec = async () => ({ stdout: 'not json at all' });
   await assert.rejects(watchdog.orca(['terminal', 'list'], badExec), (e) => {

@@ -1102,11 +1102,12 @@ function log(level, msg) {
 
 export async function orca(args, execImpl = pExecFile) {
   let stdout;
+  const startedAt = performance.now();
   try {
     ({ stdout } = await execImpl(ORCA, [...args, '--json'], { timeout: 15_000 }));
   } catch (e) {
     // orca exits non-zero for structured errors but still prints JSON to stdout
-    if (!e.stdout) throw e;
+    if (!e.stdout) { e.elapsedMs = performance.now() - startedAt; throw e; }
     stdout = e.stdout;
   }
   let parsed;
@@ -1120,6 +1121,17 @@ export async function orca(args, execImpl = pExecFile) {
   }
   if (!parsed.ok) { const e = new Error(parsed.error?.message || 'orca error'); e.code = parsed.error?.code; throw e; }
   return parsed.result;
+}
+
+export function describeOrcaError(e) {
+  if (e.killed !== true && !e.signal && typeof e.code !== 'number') return sanitize(e.message);
+  const after = Number.isFinite(e.elapsedMs) ? ` after ${(e.elapsedMs / 1000).toFixed(1)}s` : '';
+  let reason;
+  if (e.killed === true) reason = `timed out${after} (${e.signal})`;
+  else if (e.signal) reason = `killed by ${e.signal}${after}`;
+  else reason = `exit ${e.code}${after}`;
+  const stderr = String(e.stderr ?? '').trim();
+  return sanitize(`${reason}; ${stderr ? `stderr: ${stderr}` : 'no output'}`);
 }
 
 function loadState() {
@@ -1231,7 +1243,7 @@ export async function tick({ dryRun }, depsIn = {}) {
         observations.push({ handle: t.handle, banner, platform: inferPlatform(t, banner), window: tail.slice(-TAIL_LINES).join(' | ') });
       } catch (e) {
         waiting(t.handle, 'failed read');
-        log('warn', `read failed for ${t.handle}: ${sanitize(e.message)}`);
+        log('warn', `read failed for ${t.handle}: ${describeOrcaError(e)}`);
       }
     }
   };
@@ -1366,12 +1378,12 @@ export async function tick({ dryRun }, depsIn = {}) {
       await deps.orca(['terminal', 'wait', '--terminal', ev.handle, '--for', 'tui-idle', '--timeout-ms', '5000']);
     } catch (e) {
       waiting(ev.handle, 'busy terminal');
-      log('info', `skip ${ev.handle}: not idle (${sanitize(e.message)})`); continue;
+      log('info', `skip ${ev.handle}: not idle (${describeOrcaError(e)})`); continue;
     }
     let tail;                                                                        // 3. fresh re-read
     try { tail = await readTail(ev.handle, deps.orca); } catch (e) {
       waiting(ev.handle, 'failed read');
-      log('warn', `skip ${ev.handle}: re-read failed (${sanitize(e.message)}); event untouched`); continue;
+      log('warn', `skip ${ev.handle}: re-read failed (${describeOrcaError(e)}); event untouched`); continue;
     }
     const term = byHandle.get(ev.handle);
     const fresh = detectBanner(tail, inferPlatform(term), now);
@@ -1430,7 +1442,7 @@ export async function tick({ dryRun }, depsIn = {}) {
       // The attempt is already persisted (no double-send on retry); the other
       // candidates and the GAVE UP pass must still run this tick.
       waiting(ev.handle, 'failed send');
-      log('warn', `send failed for ${ev.handle} (attempt ${ev.attempts}): ${sanitize(e.message)}`);
+      log('warn', `send failed for ${ev.handle} (attempt ${ev.attempts}): ${describeOrcaError(e)}`);
     }
     } catch (e) {   // untrusted-content or unexpected throw processing this candidate
       waiting(ev.handle, 'failed send processing');
