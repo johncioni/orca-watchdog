@@ -65,7 +65,7 @@ Linear team **Orca Watchdog**, key `DOG`, workspace `johncioni`.
 ## Build / run / test
 
 ```bash
-bash scripts/orca-setup.sh  # full local gate: node >= 20, syntax checks, node --test
+bash scripts/orca-setup.sh  # full local gate: node >= 22, syntax checks, node --test
 node --test                 # unit tests (patterns, time parsing, lifecycle)
 node watchdog.mjs --dry-run # what it would do right now
 node watchdog.mjs --status  # active events
