@@ -80,8 +80,10 @@ Do not add dependencies.
 
 **Invariant files (ineligible for the docs/test/size skips):** `watchdog.mjs` (the daemon
 itself: a bug here can spam `orca terminal send` into every session),
-`install.sh` / `uninstall.sh` (launchctl bootstrap/bootout), the launchd
-plist, `orca.yaml` / `scripts/orca-setup.sh` (execute on every
+`lib/*` (the daemon's runtime, and `lib/management.mjs`, which writes the
+launchd plist and runs launchctl bootstrap/bootout), `install.sh` /
+`uninstall.sh` and the `scripts/*-archive.mjs` they exec,
+`orca.yaml` / `scripts/orca-setup.sh` (execute on every
 `orca worktree create`), `.github/*`, `CLAUDE.md`, `docs/agents-memory/*`
 (imported into every session).
 
@@ -89,7 +91,7 @@ plist, `orca.yaml` / `scripts/orca-setup.sh` (execute on every
 date. On `mergeStateStatus: BEHIND`, run `gh pr update-branch <n>`, wait for
 the checks to go green again, then merge; if more commits are needed after
 the update, `git pull` in the worktree first — never `--admin`, never a
-force-push (decision 2026-08-30).
+force-push.
 
 ## Orca (the ADE this project lives in)
 
@@ -114,10 +116,11 @@ the work across sessions.
 
 - Features, bugs, and deferred items get a `DOG-n` issue:
   `orca linear create --team DOG --title "..." --body "..."`.
-- Every spec and plan is tracked by an issue carrying the doc path (and its
-  artifact link, if published); link the worktree with `--linear-issue DOG-n`.
+- Every spec and plan is published as an Orca artifact (`orca artifacts
+  share <doc>`) and tracked by an issue carrying both the doc path and the
+  artifact link; link the worktree with `--linear-issue DOG-n`.
 - Keep status in sync at the gates: In Progress on dispatch, a comment with
-  the PR at review, Done after merge — and, when `watchdog.mjs` or the plist
+  the PR at review, Done after merge — and, when `watchdog.mjs` or `lib/*`
   changed, after the post-merge deploy (release + `brew upgrade`) has been
   verified.
 
