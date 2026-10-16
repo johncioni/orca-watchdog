@@ -3,8 +3,11 @@
 # migrations, outbound mail, or payments belongs here. Bash glob; '*' spans '/'.
 # Keep in sync with CLAUDE.md "Review loop".
 watchdog.mjs
+lib/*
 install.sh
 uninstall.sh
+scripts/install-archive.mjs
+scripts/uninstall-archive.mjs
 orca.yaml
 scripts/orca-setup.sh
 .github/*
