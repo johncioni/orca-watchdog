@@ -6,10 +6,10 @@ name: gitleaks
 # that works uniformly across all of them.
 #
 # Scans FULL history, not just the diff: a secret introduced in an earlier
-# commit on the branch is still a secret once merged. Known fixtures are
-# allowlisted in .gitleaks.toml by exact value rather than by weakening the
-# scan -- and that config is read from the base commit, never from the pull
-# request, so a PR cannot widen its own gate (see the trusted-config step).
+# commit on the branch is still a secret once merged. On pull requests the
+# config and ignore file come from the base commit, and inline gitleaks:allow
+# comments are ignored. Diff attributes are removed on both events, so they
+# cannot hide secrets from the scan (see the trusted-inputs step).
 on:
   pull_request:
   push:
@@ -77,15 +77,18 @@ jobs:
           printf 'ghp_%s\n' \
             "$(head -c 40 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" \
             > "$tmp/canary.txt"
+          printf 'ghp_%s # gitleaks:allow\n' \
+            "$(head -c 40 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" \
+            >> "$tmp/canary.txt"
           # --exit-code 0 so a *detection* is not itself a failure; a genuine
           # scanner error still exits non-zero and is reported as such.
-          if ! ./gitleaks dir "$tmp" --no-banner --redact --exit-code 0 \
+          if ! ./gitleaks dir "$tmp" --no-banner --redact --exit-code 0 --ignore-gitleaks-allow \
                --report-format json --report-path "$tmp/report.json"; then
             echo "::error::gitleaks failed while scanning the canary - the scanner is broken, not clean"
             exit 1
           fi
           if [ ! -s "$tmp/report.json" ] || \
-             [ "$(jq '[.[] | select(.RuleID == "github-pat")] | length' "$tmp/report.json")" -eq 0 ]; then
+             [ "$(jq '[.[] | select(.RuleID == "github-pat")] | length' "$tmp/report.json")" -lt 2 ]; then
             echo "::error::gitleaks did not detect the canary secret - the gate is INERT"
             exit 1
           fi
@@ -93,19 +96,41 @@ jobs:
 
       # On `pull_request` the checked-out tree is the merge commit, so it
       # contains the PR's own changes. Any config the scan reads from that tree
-      # is therefore controlled by the PR: it could add or widen a
-      # .gitleaks.toml allowlist and pass its own gate. Verified -- a PR adding
-      # an allowlist with paths = '.*' muted a planted secret entirely. Take the
-      # config from the BASE commit instead, which is already reviewed code.
+      # is therefore controlled by the PR: it could widen .gitleaks.toml or add
+      # .gitleaksignore fingerprints and pass its own gate. Take both inputs
+      # from the BASE commit instead, which is already reviewed code. The scan
+      # also ignores inline gitleaks:allow comments in the PR's history.
+      # Remove diff attributes on both events: they have no legitimate role in
+      # a secret scan, and a merged one would hide secrets from later scans.
       #
       # This raises the bar rather than closing the door: a PR can still edit
       # this workflow itself. The difference is that the bypass stops being a
       # quiet one-line data edit and becomes a visible change to the gate.
-      - name: Materialise the trusted scan config
+      - name: Materialise the trusted scan inputs
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          find . -name .git -prune -o -name .gitattributes -prune -print0 \
+            > "${RUNNER_TEMP}/gitattributes.paths"
+          removed=0
+          while IFS= read -r -d '' attributes; do
+            rm -rf -- "$attributes"
+            removed=$((removed + 1))
+          done < "${RUNNER_TEMP}/gitattributes.paths"
+          info_attributes="$(git rev-parse --git-path info/attributes)"
+          if [ -e "$info_attributes" ] || [ -L "$info_attributes" ]; then
+            rm -rf -- "$info_attributes"
+            removed=$((removed + 1))
+          fi
+          echo "removed ${removed} diff attribute paths"
+          find . -name .git -prune -o -name .gitattributes -prune -print0 \
+            > "${RUNNER_TEMP}/gitattributes.paths"
+          if [ -s "${RUNNER_TEMP}/gitattributes.paths" ] || \
+             [ -e "$info_attributes" ] || [ -L "$info_attributes" ]; then
+            echo "::error::diff attributes remain after removal"
+            exit 1
+          fi
           # `push` to main carries no base sha; there the checked-out tree IS
           # the trusted state, so read from it directly.
           if [ -n "${BASE_SHA:-}" ]; then
@@ -122,11 +147,36 @@ jobs:
           else
             echo "using the .gitleaks.toml from the trusted revision"
           fi
+          if [ -n "${BASE_SHA:-}" ]; then
+            # gitleaks also loads the source directory's ignore file. Remove
+            # any PR-controlled path before creating a fresh regular file.
+            rm -rf -- .gitleaksignore
+            if git cat-file -e "${BASE_SHA}:.gitleaksignore" 2>/dev/null; then
+              if [ "$(git cat-file -t "${BASE_SHA}:.gitleaksignore")" != blob ]; then
+                echo "::error::.gitleaksignore at the base commit is not a blob"
+                exit 1
+              fi
+              git show "${BASE_SHA}:.gitleaksignore" > .gitleaksignore
+              echo "using the .gitleaksignore from the base commit"
+              git show "${BASE_SHA}:.gitleaksignore" > "${RUNNER_TEMP}/gitleaksignore.base"
+              if [ -L .gitleaksignore ] || [ ! -f .gitleaksignore ] || \
+                 ! cmp -s .gitleaksignore "${RUNNER_TEMP}/gitleaksignore.base"; then
+                echo "::error::.gitleaksignore does not match the base blob"
+                exit 1
+              fi
+            else
+              echo "no .gitleaksignore at the base commit; leaving no ignore file"
+              if [ -e .gitleaksignore ] || [ -L .gitleaksignore ]; then
+                echo "::error::unexpected .gitleaksignore after removal"
+                exit 1
+              fi
+            fi
+          fi
 
       # `git` is the current subcommand; `detect` is retained for compatibility
       # but hidden from help in 8.x. --redact so a real finding never echoes the
       # secret into CI logs.
       - name: Scan for secrets
         run: |
-          ./gitleaks git --no-banner --redact --exit-code 1 \
+          ./gitleaks git --no-banner --redact --exit-code 1 --ignore-gitleaks-allow \
             --config "${RUNNER_TEMP}/gitleaks.toml"
