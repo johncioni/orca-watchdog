@@ -84,8 +84,9 @@ itself: a bug here can spam `orca terminal send` into every session),
 launchd plist and runs launchctl bootstrap/bootout), `install.sh` /
 `uninstall.sh` and the `scripts/*-archive.mjs` they exec,
 `orca.yaml` / `scripts/orca-setup.sh` (execute on every
-`orca worktree create`), `.github/*`, `CLAUDE.md`, `docs/agents-memory/*`
-(imported into every session).
+`orca worktree create`), `.github/*`, `CLAUDE.md`, the agent and tool
+config `~/.agents/MODELS.md` "One round" names (at any depth),
+`docs/agents-memory/*` (imported into every session).
 
 **Branch protection is strict:** `main` requires the PR branch to be up to
 date. On `mergeStateStatus: BEHIND`, run `gh pr update-branch <n>`, wait for
