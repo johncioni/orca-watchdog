@@ -12,4 +12,25 @@ orca.yaml
 scripts/orca-setup.sh
 .github/*
 CLAUDE.md
+# Agent and tool config at any depth (~/.agents/MODELS.md, "One round").
+# '*' spans '/', so each name has a root line and a nested line.
+*/CLAUDE.md
+AGENTS.md
+*/AGENTS.md
+CLAUDE.local.md
+*/CLAUDE.local.md
+.mcp.json
+*/.mcp.json
+bunfig.toml
+*/bunfig.toml
+.gitleaks.toml
+*/.gitleaks.toml
+.gitleaksignore
+*/.gitleaksignore
+.agents/*
+*/.agents/*
+.claude/*
+*/.claude/*
+.codex/*
+*/.codex/*
 docs/agents-memory/*
