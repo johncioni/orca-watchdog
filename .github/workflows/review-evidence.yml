@@ -5,9 +5,11 @@ name: review-evidence
 #   Reviewed by <reviewer>, N round(s)      -> pass
 #   Review skipped: <rule>                  -> pass only if the diff is skip-eligible:
 #                                              no invariant path touched (see .github/review-invariants.txt)
+#                                              no changed file retaining a suppression or changing a required check
 #                                              and (docs/test-only OR <= MAX_SKIP_LINES changed)
-# Renovate/Dependabot PRs are exempt only while they touch no invariant path;
-# a bot PR that touches one needs a human to run a review round and add the
+# Renovate/Dependabot PRs are exempt only while they touch no invariant path
+# and pass the suppression and check-config rules; a bot PR that fails either
+# needs a human to run a review round and add the
 # 'Reviewed by' line to its body. Fails CLOSED on any API error.
 #
 # Uses pull_request_target on purpose: the job never checks out or executes PR
@@ -61,7 +63,7 @@ jobs:
             exit 0
           fi
 
-          # Dependency-bot PRs carry no evidence line; they are judged on paths alone below.
+          # Dependency-bot PRs carry no evidence line; they are judged on paths and file contents below.
           if ! $bot; then
             if ! grep -Eiq "${prefix}review skipped:[[:space:]]*[^[:space:]]" <<<"$body" \
                || grep -Eiq "${prefix}review skipped:[[:space:]]*<rule>" <<<"$body"; then
@@ -94,9 +96,24 @@ jobs:
 
           # Current and previous (renamed-from) paths.
           files_raw="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
-            -q '.[] | .filename, (.previous_filename // empty)')"
+            --jq '.[] | tojson')"
           files=()
-          while IFS= read -r line; do [[ -n "$line" ]] && files+=("$line"); done <<<"$files_raw"
+          filenames=() previous_filenames=() statuses=()
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            # A sentinel keeps command substitution from stripping filename newlines.
+            filename="$(jq -er '.filename | select(type == "string" and length > 0) | . + "."' <<<"$line")" \
+              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
+            filename="${filename%.}"
+            previous="$(jq -r '(.previous_filename // "") + "."' <<<"$line")" \
+              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
+            previous="${previous%.}"
+            status="$(jq -er '.status | select(type == "string" and length > 0)' <<<"$line")" \
+              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
+            filenames+=("$filename") previous_filenames+=("$previous") statuses+=("$status")
+            files+=("$filename")
+            if [[ -n "$previous" ]]; then files+=("$previous"); fi
+          done <<<"$files_raw"
           if ((${#files[@]} == 0)); then
             echo "::error::no changed files returned by the API — refusing to accept a skip"; exit 1
           fi
@@ -136,6 +153,138 @@ jobs:
             printf '::error::  %s\n' "${hits[@]}"
             exit 1
           fi
+
+          # --- Suppressions and required-check configuration (including bot PRs) ---
+          is_docs() {
+            case "$1" in
+              requirements*.txt|*.lock|*/robots.txt|robots.txt|CMakeLists.txt) return 1 ;;
+              *.md|*.mdx|docs/*|LICENSE*|CHANGELOG*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::invalid head SHA — refusing skip"; exit 1
+          fi
+          if ! compare_json="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${head_sha}")"; then
+            echo "::error::unable to determine merge base — refusing skip"; exit 1
+          fi
+          merge_base="$(jq -r '.merge_base_commit.sha' <<<"$compare_json")"
+          if [[ ! "$merge_base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::invalid merge-base SHA — refusing skip"; exit 1
+          fi
+
+          scan_count=0
+          for i in "${!filenames[@]}"; do
+            if [[ "${statuses[i]}" != removed ]] && ! is_docs "${filenames[i]}"; then
+              scan_count=$((scan_count + 1))
+            fi
+          done
+          if ((scan_count > 300)); then
+            echo "::error::more than 300 changed non-docs files to scan — run a review round"; exit 1
+          fi
+
+          temp_files=()
+          trap 'rm -f -- "${temp_files[@]}"' EXIT
+          head_file="$(mktemp "${RUNNER_TEMP:-/tmp}/review-evidence.XXXXXX")"; temp_files+=("$head_file")
+          base_file="$(mktemp "${RUNNER_TEMP:-/tmp}/review-evidence.XXXXXX")"; temp_files+=("$base_file")
+          flat_file="$(mktemp "${RUNNER_TEMP:-/tmp}/review-evidence.XXXXXX")"; temp_files+=("$flat_file")
+          before_file="$(mktemp "${RUNNER_TEMP:-/tmp}/review-evidence.XXXXXX")"; temp_files+=("$before_file")
+          after_file="$(mktemp "${RUNNER_TEMP:-/tmp}/review-evidence.XXXXXX")"; temp_files+=("$after_file")
+          fetch_file() {
+            local encoded
+            encoded="$(jq -rn --arg p "$1" '$p | split("/") | map(@uri) | join("/")')"
+            if ! gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/${GITHUB_REPOSITORY}/contents/${encoded}?ref=$2" > "$3" 2>/dev/null; then
+              echo "::error::$1: unable to fetch file — refusing skip"; exit 1
+            fi
+          }
+
+          suppression_labels=(
+            'eslint-disable' 'eslint block directive' 'eslint globals'
+            'ts-ignore' 'ts-expect-error' 'ts-nocheck' 'biome-ignore'
+            'swiftlint:disable' 'stylelint-disable' 'shellcheck disable'
+            'noqa' 'type: ignore' 'pyright: ignore' 'gitleaks:allow'
+          )
+          suppression_patterns=(
+            'eslint-disable' '/\*[^[:alnum:]]*eslint' '/\*[^[:alnum:]]*globals?([^[:alnum:]]|$)'
+            '@ts-ignore' '@ts-expect-error' '@ts-nocheck' 'biome-ignore'
+            'swiftlint:disable' 'stylelint-disable' 'shellcheck[^[:alnum:]]+disable'
+            '#[^[:alnum:]]*noqa' '#[^[:alnum:]]*type[^[:alnum:]]*ignore'
+            '#[^[:alnum:]]*pyright[^[:alnum:]]*ignore' 'gitleaks:allow'
+          )
+          strip_manifest='if length != 1 or (.[0] | type) != "object" then error("not one manifest object") else .[0] |
+            del(.dependencies, .devDependencies, .peerDependencies, .peerDependenciesMeta,
+                .optionalDependencies, .bundleDependencies, .bundledDependencies,
+                .overrides, .resolutions, .version) end'
+          hits=()
+          for i in "${!filenames[@]}"; do
+            filename="${filenames[i]}" previous="${previous_filenames[i]}" status="${statuses[i]}"
+            manifest_path=''
+            for f in "$filename" "$previous"; do
+              [[ -z "$f" ]] && continue
+              basename="${f##*/}"
+              basename="${basename,,}"
+              case "$basename" in
+                package.json) if [[ -z "$manifest_path" ]]; then manifest_path="$f"; fi ;;
+                .npmrc|.yarnrc|.yarnrc.yml|eslint.config.*|.eslintrc*|.eslintignore|tsconfig*.json|jsconfig*.json|biome.json|biome.jsonc|.swiftlint*.yml|.swiftlint-baseline.json|.stylelintrc*|.shellcheckrc|ruff.toml|.ruff.toml|.flake8|mypy.ini|pyrightconfig.json|.gitleaks.toml|.gitleaksignore)
+                  hits+=("$f: config") ;;
+              esac
+            done
+
+            head_fetched=false
+            if [[ "$status" != removed ]] && ! is_docs "$filename"; then
+              fetch_file "$filename" "$head_sha" "$head_file"
+              head_fetched=true
+              LC_ALL=C tr -d '\000' < "$head_file" | LC_ALL=C tr '\r\n' '  ' > "$flat_file"
+              for j in "${!suppression_patterns[@]}"; do
+                if LC_ALL=C grep -a -E -i -q -- "${suppression_patterns[j]}" "$flat_file"; then
+                  hits+=("$filename: ${suppression_labels[j]}")
+                else
+                  grep_status=$?
+                  if ((grep_status != 1)); then
+                    echo "::error::$filename: suppression scan failed — refusing skip"; exit 1
+                  fi
+                fi
+              done
+            fi
+
+            if [[ -n "$manifest_path" ]]; then
+              case "$status" in
+                added|removed|renamed|copied)
+                  hits+=("$manifest_path: manifest added, removed or moved"); continue ;;
+              esac
+              if [[ -n "$previous" && "$previous" != "$filename" ]]; then
+                hits+=("$manifest_path: manifest added, removed or moved"); continue
+              fi
+              if ! $head_fetched; then fetch_file "$filename" "$head_sha" "$head_file"; fi
+              fetch_file "$filename" "$merge_base" "$base_file"
+              if ! before="$(jq -e -S -s "$strip_manifest" "$base_file" 2>/dev/null)" \
+                || ! after="$(jq -e -S -s "$strip_manifest" "$head_file" 2>/dev/null)"; then
+                echo "::error::$filename: invalid manifest JSON — refusing skip"; exit 1
+              fi
+              if [[ "$before" != "$after" ]]; then
+                printf '%s\n' "$before" > "$before_file"
+                printf '%s\n' "$after" > "$after_file"
+                keys="$(jq -rn --slurpfile before "$before_file" --slurpfile after "$after_file" '
+                  $before[0] as $before | $after[0] as $after |
+                  [($before + $after | keys[]) as $k
+                    | select(($before | has($k)) != ($after | has($k)) or $before[$k] != $after[$k])
+                    | $k] | join(", ")')"
+                hits+=("$filename: changes $keys")
+              fi
+            fi
+          done
+          if ((${#hits[@]})); then
+            printf '%s\n' "${hits[@]}"
+            if $bot; then
+              echo "::error::dependency bot '$PR_AUTHOR' changes a file that holds a suppression, or changes what a required check runs; review it and add 'Reviewed by <reviewer>, N rounds' to the PR body."
+            else
+              echo "::error::Review skipped, but the diff changes a file that holds a suppression, or changes what a required check runs; run a review round and record 'Reviewed by <reviewer>, N rounds'."
+            fi
+            exit 1
+          fi
           if $bot; then
             echo "::notice::dependency bot '$PR_AUTHOR' — no invariant path touched, exempt from review evidence"
             exit 0
@@ -146,7 +295,9 @@ jobs:
           for f in "${files[@]}"; do
             case "$f" in
               requirements*.txt|*.lock|*/robots.txt|robots.txt|CMakeLists.txt) docs_or_tests_only=false; break ;;
-              *.md|*.mdx|docs/*|LICENSE*|CHANGELOG*) ;;
+            esac
+            if is_docs "$f"; then continue; fi
+            case "$f" in
               *.test.*|*.spec.ts|*.spec.tsx|*.spec.js|*.spec.jsx|*.spec.mjs|*Tests.swift|tests/*|*/tests/*|test/*|*/test/*|*/__tests__/*|*/__fixtures__/*|*/fixtures/*|e2e/*|*/e2e/*) ;;
               *) docs_or_tests_only=false; break ;;
             esac
