@@ -138,8 +138,11 @@ jobs:
           fi
 
           hits=()
-          # macOS runners fold case; lowercase only the invariant match operands.
+          # macOS folds case; lowercase both paths and patterns for this match only.
+          # Patterns should use only literals and '*': classes, case-gap ranges and negations change meaning.
+          # Non-ASCII paths are refused outright.
           for f in "${files[@]}"; do
+            if [[ "$f" == *[![:ascii:]]* ]]; then hits+=("$f (non-ASCII path)"); continue; fi
             for p in "${patterns[@]}"; do
               # shellcheck disable=SC2053  # intentional glob match; '*' spans '/'
               if [[ "${f,,}" == ${p,,} ]]; then hits+=("$f (matches '$p')"); break; fi
