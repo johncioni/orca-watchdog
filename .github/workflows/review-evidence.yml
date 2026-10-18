@@ -138,10 +138,11 @@ jobs:
           fi
 
           hits=()
+          # macOS runners fold case; lowercase only the invariant match operands.
           for f in "${files[@]}"; do
             for p in "${patterns[@]}"; do
               # shellcheck disable=SC2053  # intentional glob match; '*' spans '/'
-              if [[ "$f" == $p ]]; then hits+=("$f (matches '$p')"); break; fi
+              if [[ "${f,,}" == ${p,,} ]]; then hits+=("$f (matches '$p')"); break; fi
             done
           done
           if ((${#hits[@]})); then
