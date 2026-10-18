@@ -97,23 +97,28 @@ jobs:
           # Current and previous (renamed-from) paths.
           files_raw="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
             --jq '.[] | tojson')"
+          # Validate the whole listing once; decode TSV escapes with bash builtins.
+          # The sentinel leaves an explicit field for an empty previous path.
+          file_fields=''
+          if [[ -n "$files_raw" ]]; then
+            file_fields="$(jq -rn '
+              def required: if type == "string" and length > 0 then . else error("missing file field") end;
+              inputs | [(.filename | required), (.status | required), ((.previous_filename // "") + ".")] | @tsv
+              ' <<<"$files_raw")" \
+              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
+          fi
           files=()
           filenames=() previous_filenames=() statuses=()
-          while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            # A sentinel keeps command substitution from stripping filename newlines.
-            filename="$(jq -er '.filename | select(type == "string" and length > 0) | . + "."' <<<"$line")" \
-              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
-            filename="${filename%.}"
-            previous="$(jq -r '(.previous_filename // "") + "."' <<<"$line")" \
-              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
+          while IFS=$'\t' read -r filename status previous; do
+            [[ -z "$filename" ]] && continue
+            printf -v filename '%b' "$filename"
+            printf -v previous '%b' "$previous"
             previous="${previous%.}"
-            status="$(jq -er '.status | select(type == "string" and length > 0)' <<<"$line")" \
-              || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
+            status="$(printf '%b' "$status")"
             filenames+=("$filename") previous_filenames+=("$previous") statuses+=("$status")
             files+=("$filename")
             if [[ -n "$previous" ]]; then files+=("$previous"); fi
-          done <<<"$files_raw"
+          done <<<"$file_fields"
           if ((${#files[@]} == 0)); then
             echo "::error::no changed files returned by the API — refusing to accept a skip"; exit 1
           fi
@@ -218,6 +223,8 @@ jobs:
             '#[^[:alnum:]]*noqa' '#[^[:alnum:]]*type[^[:alnum:]]*ignore'
             '#[^[:alnum:]]*pyright[^[:alnum:]]*ignore' 'gitleaks:allow'
           )
+          printf -v suppression_union '%s|' "${suppression_patterns[@]}"
+          suppression_union="${suppression_union%|}"
           strip_manifest='if length != 1 or (.[0] | type) != "object" then error("not one manifest object") else .[0] |
             del(.dependencies, .devDependencies, .peerDependencies, .peerDependenciesMeta,
                 .optionalDependencies, .bundleDependencies, .bundledDependencies,
@@ -242,16 +249,24 @@ jobs:
               fetch_file "$filename" "$head_sha" "$head_file"
               head_fetched=true
               LC_ALL=C tr -d '\000' < "$head_file" | LC_ALL=C tr '\r\n' '  ' > "$flat_file"
-              for j in "${!suppression_patterns[@]}"; do
-                if LC_ALL=C grep -a -E -i -q -- "${suppression_patterns[j]}" "$flat_file"; then
-                  hits+=("$filename: ${suppression_labels[j]}")
-                else
-                  grep_status=$?
-                  if ((grep_status != 1)); then
-                    echo "::error::$filename: suppression scan failed — refusing skip"; exit 1
+              # Clean files need one scan; matching files still report every label in order.
+              if LC_ALL=C grep -a -E -i -q -- "$suppression_union" "$flat_file"; then
+                for j in "${!suppression_patterns[@]}"; do
+                  if LC_ALL=C grep -a -E -i -q -- "${suppression_patterns[j]}" "$flat_file"; then
+                    hits+=("$filename: ${suppression_labels[j]}")
+                  else
+                    grep_status=$?
+                    if ((grep_status != 1)); then
+                      echo "::error::$filename: suppression scan failed — refusing skip"; exit 1
+                    fi
                   fi
+                done
+              else
+                grep_status=$?
+                if ((grep_status != 1)); then
+                  echo "::error::$filename: suppression scan failed — refusing skip"; exit 1
                 fi
-              done
+              fi
             fi
 
             if [[ -n "$manifest_path" ]]; then
