@@ -8,6 +8,7 @@ install.sh
 uninstall.sh
 scripts/install-archive.mjs
 scripts/uninstall-archive.mjs
+scripts/build-release.mjs
 orca.yaml
 scripts/orca-setup.sh
 .github/*

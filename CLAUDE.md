@@ -83,6 +83,7 @@ itself: a bug here can spam `orca terminal send` into every session),
 `lib/*` (the daemon's runtime, and `lib/management.mjs`, which writes the
 launchd plist and runs launchctl bootstrap/bootout), `install.sh` /
 `uninstall.sh` and the `scripts/*-archive.mjs` they exec,
+`scripts/build-release.mjs` (the release smoke the `ci` check runs),
 `orca.yaml` / `scripts/orca-setup.sh` (execute on every
 `orca worktree create`), `.github/*`, `CLAUDE.md`, the agent and tool
 config `~/.agents/MODELS.md` "One round" names (at any depth),
