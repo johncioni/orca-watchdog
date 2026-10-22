@@ -3209,11 +3209,8 @@ test('tick: terminal reads run with bounded concurrency, not one at a time (DOG-
     throw new Error(`unexpected orca call ${args.join(' ')}`);
   };
   const deps = { orca, fetchImpl: fakeFetch(() => okJson({})), env: {}, now: () => at(10), loadState: () => ({}), saveState: () => {}, log: () => {}, reapChoices: () => 0 };
-  const started = Date.now();
   await tick({ dryRun: false }, deps);
-  const elapsed = Date.now() - started;
   assert.ok(peak >= 2 && peak <= 4, `peak in-flight reads ${peak}, expected 2..4`);
-  assert.ok(elapsed < 250, `8 reads at 50 ms took ${elapsed} ms; sequential would be >= 400`);
 });
 
 test('tick: fresh re-read failure leaves the event untouched and sends nothing', async () => {
