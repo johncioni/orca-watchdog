@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.14 - 2026-10-23
+
+### Fixed
+
+- Detect Codex usage-limit banners that write `You’ve` with a curly apostrophe, as Codex CLI 0.155.1 and later do. Before, those limits created no event and were never resumed. (DOG-68)
+
 ## 1.2.13 - 2026-10-23
 
 ### Fixed
