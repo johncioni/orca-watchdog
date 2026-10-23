@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.17 - 2026-10-23
+
+### Added
+
+- Save what the watchdog read from a terminal each time it detects a stalled session or sends a resume, so a real screen can be checked later. Captures go to `~/.local/state/orca-watchdog/captures/`, are readable only by you, and the newest 50 are kept. `--dry-run` saves none. (DOG-72)
+
 ## 1.2.16 - 2026-10-23
 
 ### Added
