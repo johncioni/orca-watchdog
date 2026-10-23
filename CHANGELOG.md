@@ -2,6 +2,13 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.15 - 2026-10-23
+
+### Fixed
+
+- Never send a resume into an input box that holds unsent text. Orca 1.4.237 reports typed composer text in a separate `draft` field and leaves it out of the screen text, so the watchdog missed real drafts and could submit them along with the resume prompt. (DOG-69)
+- Resume idle Codex terminals that still show an earlier prompt. Codex prints submitted prompts as `› …` in its history, and the draft check took them for unsent text, so those terminals were never resumed. (DOG-69)
+
 ## 1.2.14 - 2026-10-23
 
 ### Fixed
