@@ -5,9 +5,9 @@ Newest first. Format and rules: `README.md` in this directory.
 ## 2026-10-23: Codex limit wording drift fails silently
 
 A `■` line that `codexCandidate` picks but no `CODEX_LIMIT_FORMS` entry matches creates no
-event, because the generic rule is skipped once a Codex candidate exists. Codex 0.155.1 wrote
-`You’ve` (U+2019), so three real limits on 2026-09-21 could not be detected until 1.2.14. After
-a Codex update, check its banner wording; its session logs' `usage_limit_exceeded` records hold it.
+event: the generic rule is skipped once a Codex candidate exists. Codex 0.155.1 wrote `You’ve`
+(U+2019), and its three 2026-09-21 limit texts replay as `null` on a Codex terminal before 1.2.14.
+After a Codex update, check its wording against `usage_limit_exceeded` in its session logs.
 PR: https://github.com/johncioni/orca-watchdog/pull/94, https://linear.app/johncioni/issue/DOG-67
 
 ## 2026-10-23: The LaunchAgent keeps launchd's default process type
