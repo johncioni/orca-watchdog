@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-10-23: Out-of-credits Claude sessions get blind resumes, never a purchase
+
+Credits never reset and the allowance's reset time is not on screen, so a `credits` event
+resumes blindly every 6 h for up to 7 days (at most 27 sends) and never sends `/usage-credits` or `/model`
+(John's call). Detection anchors on the message's first sentence and its ending; John declined
+a whole-message match (DOG-71) because a reword would then miss silently, as Codex drift does.
+PR: https://github.com/johncioni/orca-watchdog/pull/99, https://linear.app/johncioni/issue/DOG-71
+
 ## 2026-10-23: Codex limit wording drift fails silently
 
 A `■` line that `codexCandidate` picks but no `CODEX_LIMIT_FORMS` entry matches creates no
@@ -81,14 +89,6 @@ falls back to local time. A DST-overlap clock always takes the later
 occurrence: an unsent, unchanged banner skips the moved-later hold (#56), so
 an earlier pick resumed before the reset (DOG-61). Up to an hour late is accepted.
 PR: https://github.com/johncioni/orca-watchdog/pull/54, https://github.com/johncioni/orca-watchdog/pull/73
-
-## 2026-09-22: Outage rows split payload from TUI envelope
-
-Each registry outage row pairs a payload regex with an envelope of
-line-prefix markers. A line counts only when its prefix is exactly a
-marker, which is what keeps the unanchored payload regex from matching
-prose.
-PR: https://github.com/johncioni/orca-watchdog/pull/52
 
 ## 2026-09-22: Claude footer chrome is structural, not content
 

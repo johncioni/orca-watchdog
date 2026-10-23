@@ -37,5 +37,8 @@ restate what the code or tests show beyond the name needed to find the
 code. When a new entry supersedes an older one, the same PR edits or
 deletes the older one, so no two entries disagree.
 
-Keep each file under about 100 lines. When promoting, drop entries the code
-now makes obvious. Nothing here requires a `HANDOFF.md` checkpoint.
+Keep each file at 100 lines or fewer: `merge-reviewed-pr.sh` refuses a memory
+PR whose merge lengthens a file past 100 lines, and a memory PR that touches a
+file already over that budget trims it to 100 or fewer (the reviewer checks
+this; the gate does not). When promoting, drop entries the code now makes
+obvious. Nothing here requires a `HANDOFF.md` checkpoint.

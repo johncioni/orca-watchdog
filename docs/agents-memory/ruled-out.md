@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-10-23: Reading drafts from `tail` alone, or from the last prompt-glyph line
+
+Orca 1.4.237 moves typed composer text into the read's `draft` field and leaves a bare `❯`/`›`
+in `tail`, so a tail-only guard missed real drafts. Taking the last `>`/`›` line as the composer
+let `>`-led draft lines hide the real one, and matching the boundary on trimmed rows let an
+indented `›` inside a pasted draft do the same. The guard checks `draft`, then a column-0 composer.
+PR: https://github.com/johncioni/orca-watchdog/pull/97
+
 ## 2026-10-02: Fixing DOG-60's relative-clock re-anchoring gaps
 
 Captured limit banners (Claude, Codex, Gemini) all state an absolute clock, so the early third
