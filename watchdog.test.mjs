@@ -1918,6 +1918,25 @@ test('DOG-70 detection: a wrapped credits block must end before unrelated indent
   ]), 'claude', NOW), null);
 });
 
+test('DOG-71 detection: wrapped credits stop before an adjacent indented chrome hint', () => {
+  assert.equal(detectBanner([
+    ...CLAUDE_SESSION_LIMIT_NARROW.slice(0, 19),
+    ...CREDITS_NARROW_LINES,
+    ...CLAUDE_SESSION_LIMIT_NARROW.slice(23),
+  ], 'claude', NOW)?.kind, 'credits');
+});
+
+test('DOG-71 detection: wrapped credits cannot span five continuation lines', () => {
+  assert.equal(detectBanner(creditsInNarrowEnvelope([
+    "  ⎿  You're out of usage credits. Run /usage-credits to",
+    '     keep using a model whose name is',
+    '     long enough to need',
+    '     several more',
+    '     rows before',
+    '     /model to switch models.',
+  ]), 'claude', NOW), null);
+});
+
 test('DOG-70 detection: a credits sentence without the message ending is prose', () => {
   assert.equal(detectBanner(creditsInNarrowEnvelope([
     "⏺ You're out of usage credits. That explains the stop.",
