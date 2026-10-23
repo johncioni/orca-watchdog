@@ -1216,7 +1216,12 @@ export async function tick({ dryRun }, depsIn = {}) {
     terminalsArrayPresent = Array.isArray(listed);
     terminals = terminalsArrayPresent ? listed : [];
   } catch (e) {
-    if (isUnavailableError(e)) { observe('unavailable'); log('debug', `orca unavailable: ${e.message.split('\n')[0]}`); return; }
+    if (isUnavailableError(e)) {
+      observe('unavailable');
+      if (e.killed === true || e.signal) log('warn', `terminal list failed: ${describeOrcaError(e)}`);
+      else log('debug', `orca unavailable: ${e.message.split('\n')[0]}`);
+      return;
+    }
     throw e;
   }
   const byHandle = new Map(terminals.map((t) => [t.handle, t]));

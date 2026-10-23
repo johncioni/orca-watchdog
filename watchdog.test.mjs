@@ -3414,6 +3414,36 @@ function nodeExecError(fields = {}) {
     { code: 1, signal: null, killed: false, stdout: '', stderr: '', ...fields });
 }
 
+test('DOG-65: terminal list timeout warns once and skips reads and sends', async () => {
+  const h = harness({ tail: OUTAGE_TAIL, terminals: [T] });
+  const logs = [];
+  const observed = [];
+  const calls = [];
+  h.deps.orca = async (args) => {
+    calls.push(args);
+    throw nodeExecError({ message: 'Command failed: /x/orca terminal list --json\n', code: null, killed: true, signal: 'SIGTERM', elapsedMs: 15_000 });
+  };
+  h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+  h.deps.observe = (...args) => observed.push(args);
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(logs.filter((entry) => entry.startsWith('warn ')), [
+    'warn terminal list failed: timed out after 15.0s (SIGTERM); no output',
+  ]);
+  assert.deepEqual(observed, [['unavailable']]);
+  assert.deepEqual(calls, [['terminal', 'list']]);
+  assert.deepEqual(h.sent, []);
+});
+
+test('DOG-65: terminal list runtime_unavailable stays at debug', async () => {
+  const h = harness({ tail: OUTAGE_TAIL, terminals: [T] });
+  const logs = [];
+  h.deps.orca = async () => { throw Object.assign(new Error('Orca is restarting'), { code: 'runtime_unavailable' }); };
+  h.deps.log = (level, message) => logs.push(`${level} ${message}`);
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(logs, ['debug orca unavailable: Orca is restarting']);
+  assert.deepEqual(h.sent, []);
+});
+
 test('DOG-62: describeOrcaError explains exec failures without the command line', () => {
   const cases = [
     [{ code: null, signal: 'SIGTERM', killed: true, elapsedMs: 15_000 }, 'timed out after 15.0s (SIGTERM); no output'],
