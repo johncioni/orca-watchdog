@@ -725,6 +725,13 @@ test('Codex 429 retry-limit and usage-limit lines are not outages', () => {
   assert.ok(b); assert.equal(b.kind, 'limit');
 });
 
+test('detects Codex usage limit with a curly apostrophe (DOG-68)', () => {
+  const line = '■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 2:54 PM.';
+  const b = detectBanner([line, '›'], 'codex', new Date('2026-09-21T13:33:00'));
+  assert.equal(b?.kind, 'limit');
+  assert.equal(b.resetAt, new Date('2026-09-21T14:54:00').toISOString());
+});
+
 test('Reconnecting and esc-to-interrupt after the error veto the outage (still working)', () => {
   assert.equal(detectBanner([CODEX_ERR, 'Reconnecting... 3/5 (13s • esc to interrupt)', '  └ Stream disconnected before completion: websocket closed'], 'codex'), null);
   assert.equal(detectBanner([CODEX_ERR, 'Working (12s • esc to interrupt)'], 'codex'), null);
@@ -899,6 +906,13 @@ test('detectBanner: Codex reset-less usage limit ⇒ limit-open (DOG-20)', () =>
 test('detectBanner: Codex usage limit WITH reset ⇒ limit (DOG-20)', () => {
   const b = detectBanner([USAGE_WRAP[0], 'purchase more credits or try again at 10:12 PM.', '›'], 'codex', NOW);
   assert.equal(b.kind, 'limit'); assert.ok(b.resetAt);
+});
+test('detectBanner: wrapped Codex usage limit with a curly apostrophe ⇒ limit (DOG-68)', () => {
+  const lines = ['■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to',
+    'purchase more credits or try again at 2:54 PM.', '›'];
+  const b = detectBanner(lines, 'codex', new Date('2026-09-21T13:33:00'));
+  assert.equal(b?.kind, 'limit');
+  assert.equal(b.resetAt, new Date('2026-09-21T14:54:00').toISOString());
 });
 test('detectBanner: bare 429 ⇒ limit-open; reset continuation ⇒ limit (DOG-20)', () => {
   assert.equal(detectBanner(OPEN_TAIL, 'codex').kind, 'limit-open');
