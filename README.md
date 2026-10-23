@@ -192,6 +192,11 @@ want a clean slate.
 - **Nothing happens on a stalled terminal?** Run `orca-watchdog --dry-run` to see
   what the current tick observes, and read the activity log with
   `orca-watchdog logs`.
+- **Screen captures.** Each time the watchdog detects a stalled terminal or
+  sends a resume, it saves what it read from that terminal (the text on screen
+  and any draft in the input box) to `~/.local/state/orca-watchdog/captures/`.
+  The files are readable only by you, the newest 50 are kept, and `--dry-run`
+  saves none. You can delete the folder at any time.
 - **Inspecting logs.** `orca-watchdog logs` prints the latest activity (read-only);
   add `--follow` to watch it live, `--lines N` for more history, or
   `--source stdout|stderr` to see the launchd job's own output — the first place to
