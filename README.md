@@ -11,7 +11,7 @@ is safe to. Zero AI, zero tokens: it acts precisely when the agent subscriptions
 it watches are exhausted or a provider is down, and does nothing the rest of the
 time. (The installed command is `orca-watchdog`.)
 
-It handles three conditions:
+It handles four conditions:
 
 - **Rate limit** — a terminal shows a limit banner with a stated reset time. The
   watchdog waits until that time has passed and the terminal is still idle on the
@@ -23,6 +23,9 @@ It handles three conditions:
   clears.
 - **Codex limit with no reset time** — asks you what to do in a native macOS
   alert; nothing is sent until you choose **Continue** or **Wait 1h**.
+- **Claude out of usage credits:** sends the existing resume prompt after 6 hours,
+  then every 6 hours until recovery or 7 days after detection (at most 28 sends).
+  It never buys credits or switches models.
 
 It watches **Claude Code**, **Codex**, and **Gemini CLI** terminals (see
 [Supported agents](#supported-agents)). It is plain Node with no dependencies,
@@ -162,8 +165,8 @@ orca-watchdog start
 ```
 
 Your pause state and tracked events are preserved across updates. Downgrading to
-a version from before the reset-less alert feature, or from before Gemini
-support, causes that version to back up and reset a state file that contains the
+a version from before the reset-less alert, usage-credit retry, or Gemini
+support causes that version to back up and reset a state file that contains the
 newer event kind or platform.
 
 ## Remove
@@ -218,7 +221,7 @@ flowchart TD
     A["launchd timer — every 5 min"] --> P{"Paused, or another<br/>tick already running?"}
     P -->|yes| Z(["Do nothing"])
     P -->|no| R["Read every connected<br/>Orca terminal's tail"]
-    R --> D["Detect a banner in the last 18 lines:<br/>rate limit, outage, or Codex reset-less limit"]
+    R --> D["Detect a banner in the last 18 lines:<br/>rate limit, outage, Codex reset-less limit,<br/>or Claude out of usage credits"]
     D --> RC["Reconcile events<br/>(new, cleared, replaced, re-armed, gave up)"]
     RC --> Q{"Any event due<br/>to resume?"}
     Q -->|no| Z
@@ -308,12 +311,12 @@ identity.
 
 | Agent | Rate limit | API outage | Status feed | Notes |
 |---|---|---|---|---|
-| Claude Code | yes | yes | `status.claude.com` (Statuspage) | Orca identities `claude` and `claude-agent-teams`. Supports `You've hit your session limit · resets <time> (<IANA zone>)` and the existing Claude limit forms. |
+| Claude Code | yes (+ credits retry) | yes | `status.claude.com` (Statuspage) | Orca identities `claude` and `claude-agent-teams`. Supports `You've hit your session limit · resets <time> (<IANA zone>)` and the existing Claude limit forms. |
 | Codex | yes (+ reset-less alert) | yes (`■` error line) | `status.openai.com` (Statuspage) | Held while `Reconnecting… N/5` is on screen. |
 | Gemini CLI | yes | no | Google Cloud `incidents.json`, product *Vertex Gemini API* | `Usage limit reached for <model>.` / `Access resets at <time>.` A zone abbreviation after the clock (`3:00 PM PST`) is honoured at its fixed offset; a bare clock is read as local time. Gemini's high-demand fallback line is transient and self-heals, so no outage rule. |
 
 A registry entry carries: the Orca identities that map to it; which event kinds
-it may raise (`limit`, `outage`, reset-less `limitOpen`); its limit rule
+it may raise (`limit`, `outage`, reset-less `limitOpen`, Claude-only `credits`); its limit rule
 (generic, or Codex's `■` form); source-verified outage patterns; screen chrome
 that may legitimately follow a banner while the agent is still stalled (so a
 stale banner with real output after it is ignored); output-start markers,
