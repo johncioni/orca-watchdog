@@ -11,6 +11,7 @@ import os from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runObservedCheck, atomicWriteFile, readRegularSync } from './lib/operations.mjs';
 import { appendActivity, maintainLogs } from './lib/logs.mjs';
+import { VERSION } from './version.mjs';
 
 export const RESUME_TEXT = 'Session rate limit has reset. Resume where you left off.';
 
@@ -45,8 +46,8 @@ const KINDS = Object.keys(SCHEDULE);
 // preserve the prior OUTAGE_PATTERNS row order). Today's scattered per-platform
 // constants — PLATFORMS, OUTAGE_PATTERNS, the status URLs, the validateEvent
 // capability gates, the limit-rule selector, and the trailing-chrome seam — are
-// all DERIVED from this table. Scope is claude + codex ONLY this phase; later
-// phases add providers as new entries, never as new branches.
+// all DERIVED from this table. Add a provider as a new entry, never as a new
+// branch.
 //   agentIdentity   — terminal.agentIdentity values that resolve to this provider.
 //   kinds           — which detections apply (limit / outage / limitOpen / credits).
 //   limit.rule      — 'generic' (LIMIT_RE/REACHED_RE/RESET_RE) or 'codex' (the
@@ -1202,6 +1203,18 @@ export function saveState(events, stateDir = STATE_DIR) {
   atomicWriteFile(stateDir, 'state.json', JSON.stringify({ version: 2, events }, null, 2), { checkTarget: false, hardenDir: false });
 }
 
+export function writeCapture(stateDir, capture, { keep = 50 } = {}) {
+  if (!PATH_COMPONENT_RE.test(capture.handle)) throw new Error('invalid capture handle');
+  const dir = path.join(stateDir, 'captures');
+  const name = `${capture.at.replace(/[-:.]/g, '')}-${capture.handle}-${capture.reason}.json`;
+  const file = atomicWriteFile(dir, name, JSON.stringify({ version: 1, watchdogVersion: VERSION, ...capture }, null, 2) + '\n');
+  const names = fs.readdirSync(dir).filter((n) => /^\d{8}T\d{9}Z-[A-Za-z0-9_-]+-(detected|send)\.json$/.test(n)).sort();
+  for (const old of names.slice(0, Math.max(0, names.length - keep))) {
+    try { fs.unlinkSync(path.join(dir, old)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  }
+  return file;
+}
+
 export function acquireLock(lockFile = LOCK_FILE) {
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
   // The exclusive create (wx) is the sole arbiter: in the common no-lock case it
@@ -1225,16 +1238,21 @@ async function readTail(handle, orcaFn = orca) {
   const r = await orcaFn(['terminal', 'read', '--terminal', handle]);
   const tail = r?.terminal?.tail;
   if (!Array.isArray(tail)) throw new Error('terminal read returned no tail array');
-  return { tail, draft: r.terminal.draft };
+  return { tail, draft: r.terminal.draft, terminal: r.terminal };
 }
 
 const DEFAULT_DEPS = () => ({ orca, fetchImpl: globalThis.fetch, env: process.env, now: () => new Date(), loadState, saveState, log,
+  saveCapture: (c) => writeCapture(STATE_DIR, c),
   newEpisodeId: randomUUID, spawn: spawnAlert, readChoice, clearChoice, reapChoices,
   isDisabled: () => fs.existsSync(DISABLED_FILE) });
 
 export async function tick({ dryRun }, depsIn = {}) {
   const deps = { ...DEFAULT_DEPS(), ...depsIn };
   const observe = (...args) => { try { deps.observe?.(...args); } catch { /* diagnostics cannot change eligibility */ } };
+  const saveCapture = (c) => {
+    if (dryRun) return;
+    try { deps.saveCapture(c); } catch (e) { deps.log('warn', `capture failed for ${sanitize(c.handle)}: ${sanitize(e.message)}`); }
+  };
   const waiting = (handle, reason) => observe('waiting', handle, reason);
   const log = deps.log;   // shadows the module logger so tests can silence it
   let terminals;
@@ -1265,7 +1283,7 @@ export async function tick({ dryRun }, depsIn = {}) {
       const t = queue.shift();
       attemptedReads += 1;
       try {
-        const { tail } = await readTail(t.handle, deps.orca);
+        const { tail, terminal } = await readTail(t.handle, deps.orca);
         const banner = detectBanner(tail, inferPlatform(t), deps.now());
         if (!banner && shouldLog('debug') && hasOutageLine(tail)) {
           const blocker = classifyOutageNearMiss(tail, inferPlatform(t));
@@ -1273,7 +1291,7 @@ export async function tick({ dryRun }, depsIn = {}) {
             log('debug', `outage payload present but not detected (${blocker}) on ${t.handle}: ${sanitize(tail.slice(-TAIL_LINES).join(' | '), 600)}`);
           }
         }
-        observations.push({ handle: t.handle, banner, platform: inferPlatform(t, banner), window: tail.slice(-TAIL_LINES).join(' | ') });
+        observations.push({ handle: t.handle, banner, read: terminal, platform: inferPlatform(t, banner), window: tail.slice(-TAIL_LINES).join(' | ') });
       } catch (e) {
         waiting(t.handle, 'failed read');
         log('warn', `read failed for ${t.handle}: ${describeOrcaError(e)}`);
@@ -1315,6 +1333,9 @@ export async function tick({ dryRun }, depsIn = {}) {
     const o = observations.find((x) => x.handle === ev.handle);
     log('info', `detected ${ev.kind} on ${ev.handle} (${ev.platform}, ${o?.banner?.patternId ?? 'limit'}: ${sanitize(o?.banner?.matchedLine ?? ev.bannerText)}), resetAt ${ev.resetAt}`);
     if (ev.kind === 'outage' && shouldLog('debug')) log('debug', `outage window on ${ev.handle}: ${sanitize(o?.window ?? '', 600)}`);
+    if (o) saveCapture({ at: now.toISOString(), reason: 'detected', handle: ev.handle,
+      agentIdentity: byHandle.get(ev.handle)?.agentIdentity ?? null, platform: ev.platform, kind: ev.kind,
+      patternId: o.banner?.patternId ?? null, attempt: null, sent: null, read: o.read });
   }
 
   // Reconcile has already selected sends. Consent becomes eligible next tick,
@@ -1413,8 +1434,8 @@ export async function tick({ dryRun }, depsIn = {}) {
       waiting(ev.handle, 'busy terminal');
       log('info', `skip ${ev.handle}: not idle (${describeOrcaError(e)})`); continue;
     }
-    let tail, draft;                                                                 // 3. fresh re-read
-    try { ({ tail, draft } = await readTail(ev.handle, deps.orca)); } catch (e) {
+    let tail, draft, terminal;                                                       // 3. fresh re-read
+    try { ({ tail, draft, terminal } = await readTail(ev.handle, deps.orca)); } catch (e) {
       waiting(ev.handle, 'failed read');
       log('warn', `skip ${ev.handle}: re-read failed (${describeOrcaError(e)}); event untouched`); continue;
     }
@@ -1428,7 +1449,11 @@ export async function tick({ dryRun }, depsIn = {}) {
     if (fresh.kind !== ev.kind || (platform !== 'unknown' && platform !== ev.platform)) {
       log('info', `skip ${ev.handle}: banner changed to ${fresh.kind}/${platform} before send; fresh event`);
       log('info', `removed ${ev.kind} on ${ev.handle}: replaced`);
-      events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events); continue;
+      events[key] = newEvent({ handle: ev.handle, banner: fresh, platform }, now, deps.newEpisodeId); deps.saveState(events);
+      saveCapture({ at: now.toISOString(), reason: 'detected', handle: ev.handle,
+        agentIdentity: term?.agentIdentity ?? null, platform, kind: fresh.kind,
+        patternId: fresh.patternId ?? null, attempt: null, sent: null, read: terminal });
+      continue;
     }
     // An unsent, unchanged banner still names the last accepted reset;
     // reparsing an old clock after the 2-hour grace would roll it to tomorrow.
@@ -1467,8 +1492,10 @@ export async function tick({ dryRun }, depsIn = {}) {
     ev.lastAttemptAt = now.toISOString();
     ev.status = 'resumed';
     deps.saveState(events);
+    let sent = false;
     try {
       await deps.orca(['terminal', 'send', '--terminal', ev.handle, '--text', sch.resumeText, '--enter']);
+      sent = true;
       observe('resumed', ev.handle);
       log('info', `resumed ${ev.handle} (${ev.kind}, attempt ${ev.attempts})`);
     } catch (e) {
@@ -1477,6 +1504,9 @@ export async function tick({ dryRun }, depsIn = {}) {
       waiting(ev.handle, 'failed send');
       log('warn', `send failed for ${ev.handle} (attempt ${ev.attempts}): ${describeOrcaError(e)}`);
     }
+    saveCapture({ at: now.toISOString(), reason: 'send', handle: ev.handle,
+      agentIdentity: term?.agentIdentity ?? null, platform, kind: ev.kind,
+      patternId: fresh.patternId ?? null, attempt: ev.attempts, sent, read: terminal });
     } catch (e) {   // untrusted-content or unexpected throw processing this candidate
       waiting(ev.handle, 'failed send processing');
       log('warn', `skip ${ev.handle}: send processing failed (${sanitize(e.message)}); event untouched`);

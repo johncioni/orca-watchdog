@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import * as watchdog from './watchdog.mjs';
+import { VERSION } from './version.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { detectBanner, parseResetTime, reconcile, eventKey, stripAnsi, sanitize, hasOutageLine, inferPlatform,
   SCHEDULE, OUTAGE_RESUME_TEXT, newEvent, validateEvent, parseStateFile } from './watchdog.mjs';
@@ -1844,22 +1845,23 @@ test('suppressedByStatus only for major/critical', () => {
 
 // --- tick send gate (fake orca, fake fetch, in-memory state) ---
 
-function harness({ tail, terminals, indicator = 'none', state = {}, now = at(10), readThrows = false }) {
-  const sent = [];
+function harness({ tail, terminals, indicator = 'none', state = {}, now = at(10), readThrows = false, terminal = {}, reads, sendThrows = false }) {
+  const sent = [], captures = [];
+  let readIndex = 0;
   const orcaCalls = [];
   let saved = null;
   const orca = async (args) => {
     orcaCalls.push(args);
     const [scope, verb] = args;
     if (scope === 'terminal' && verb === 'list') return { terminals };
-    if (scope === 'terminal' && verb === 'read') { if (readThrows) throw new Error('Command failed: read'); return { terminal: { tail } }; }
+    if (scope === 'terminal' && verb === 'read') { if (readThrows) throw new Error('Command failed: read'); return { terminal: reads ? reads[readIndex++] : { tail, ...terminal } }; }
     if (scope === 'terminal' && verb === 'wait') return {};
-    if (scope === 'terminal' && verb === 'send') { sent.push(args[args.indexOf('--text') + 1]); return {}; }
+    if (scope === 'terminal' && verb === 'send') { if (sendThrows) throw new Error('send unavailable'); sent.push(args[args.indexOf('--text') + 1]); return {}; }
     throw new Error(`unexpected orca call ${args.join(' ')}`);
   };
   const fetchImpl = fakeFetch(() => okJson({ status: { indicator } }));
-  const deps = { orca, fetchImpl, env: {}, now: () => now, loadState: () => structuredClone(state), saveState: (e) => { saved = structuredClone(e); }, log: () => {}, reapChoices: () => 0, isDisabled: () => false };
-  return { deps, sent, orcaCalls, fetchImpl, saved: () => saved };
+  const deps = { orca, fetchImpl, env: {}, now: () => now, loadState: () => structuredClone(state), saveState: (e) => { saved = structuredClone(e); }, saveCapture: (c) => captures.push(c), log: () => {}, reapChoices: () => 0, isDisabled: () => false };
+  return { deps, sent, captures, orcaCalls, fetchImpl, saved: () => saved };
 }
 const T = { handle: H, connected: true, writable: true, agentIdentity: 'claude' };
 const OUTAGE_TAIL = [CLAUDE_529, '', '> ', '? for shortcuts'];
@@ -2312,7 +2314,7 @@ test('DOG-51: limit events survive alternating failed 7-, 4-, and 0-terminal tic
     },
     fetchImpl: fakeFetch(() => okJson({ status: { indicator: 'none' } })),
     env: {}, now: () => now, loadState: () => structuredClone(state),
-    saveState: (events) => { state = structuredClone(events); },
+    saveState: (events) => { state = structuredClone(events); }, saveCapture: () => {},
     log: (level, message) => logs.push(`${level} ${message}`), reapChoices: () => 0, isDisabled: () => false,
   };
   const run = async (time, terminals, readFails = false) => {
@@ -3499,7 +3501,7 @@ test('tick: a throwing send is logged and the remaining candidates still send (D
   const state = { ...seed(), [H2]: { ...seed()[H], handle: H2 } };
   let saved = null;
   const deps = { orca, fetchImpl: fakeFetch(() => okJson({ status: { indicator: 'none' } })), env: {}, now: () => at(10),
-    loadState: () => structuredClone(state), saveState: (e) => { saved = structuredClone(e); }, log: (lvl, msg) => logged.push(`${lvl} ${msg}`), reapChoices: () => 0 };
+    loadState: () => structuredClone(state), saveState: (e) => { saved = structuredClone(e); }, saveCapture: () => {}, log: (lvl, msg) => logged.push(`${lvl} ${msg}`), reapChoices: () => 0 };
   await tick({ dryRun: false }, deps);
   assert.deepEqual(sent, [H2]);
   assert.equal(saved[H].attempts, 1, 'attempt was persisted before the failed send');
@@ -3529,7 +3531,7 @@ test('tick: a throw while processing one send candidate does not abort the other
   };
   const state = { ...seed(), [H2]: { ...seed()[H], handle: H2 } };
   const deps = { orca, fetchImpl: fakeFetch(() => okJson({ status: { indicator: 'none' } })), env: {}, now: () => at(10),
-    loadState: () => structuredClone(state), saveState: () => {}, log: (lvl, msg) => logged.push(`${lvl} ${msg}`), reapChoices: () => 0, isDisabled: () => false };
+    loadState: () => structuredClone(state), saveState: () => {}, saveCapture: () => {}, log: (lvl, msg) => logged.push(`${lvl} ${msg}`), reapChoices: () => 0, isDisabled: () => false };
   await tick({ dryRun: false }, deps);   // must NOT throw/abort
   assert.deepEqual(sent, [H2]);          // the healthy candidate still sends
   assert.ok(logged.some((l) => l.startsWith('warn') && l.includes(H)), logged.join('\n'));
@@ -3545,7 +3547,7 @@ test('tick: multi-line orca errors are logged on one line (DOG-13)', async () =>
     throw new Error(`unexpected orca call ${args.join(' ')}`);
   };
   const deps = { orca, fetchImpl: fakeFetch(() => okJson({ status: { indicator: 'none' } })), env: {}, now: () => at(10),
-    loadState: () => seed(), saveState: () => {}, log: (lvl, msg) => logged.push(msg), reapChoices: () => 0 };
+    loadState: () => seed(), saveState: () => {}, saveCapture: () => {}, log: (lvl, msg) => logged.push(msg), reapChoices: () => 0 };
   await tick({ dryRun: false }, deps);
   const line = logged.find((m) => m.includes('not idle'));
   assert.ok(line, logged.join('\n'));
@@ -3567,7 +3569,7 @@ test('tick: terminal reads run with bounded concurrency, not one at a time (DOG-
     }
     throw new Error(`unexpected orca call ${args.join(' ')}`);
   };
-  const deps = { orca, fetchImpl: fakeFetch(() => okJson({})), env: {}, now: () => at(10), loadState: () => ({}), saveState: () => {}, log: () => {}, reapChoices: () => 0 };
+  const deps = { orca, fetchImpl: fakeFetch(() => okJson({})), env: {}, now: () => at(10), loadState: () => ({}), saveState: () => {}, saveCapture: () => {}, log: () => {}, reapChoices: () => 0 };
   await tick({ dryRun: false }, deps);
   assert.ok(peak >= 2 && peak <= 4, `peak in-flight reads ${peak}, expected 2..4`);
 });
@@ -4340,4 +4342,117 @@ test('DOG-40 registry: Gemini status config is GCP incidents for Vertex Gemini A
     url: 'https://status.cloud.google.com/incidents.json',
     product: 'Vertex Gemini API',
   });
+});
+
+
+// --- terminal captures (DOG-72) ---
+
+function captureDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-capture-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+const CAPTURE = { at: '2026-10-23T17:19:19.123Z', reason: 'detected', handle: H,
+  agentIdentity: 'claude', platform: 'claude', kind: 'outage', patternId: 'claude-api-error',
+  attempt: null, sent: null, read: { tail: ['screen'], draft: 'draft', source: 'screen' } };
+
+test('DOG-72: writeCapture saves the exact versioned read with private modes', (t) => {
+  const dir = captureDir(t);
+  const file = watchdog.writeCapture(dir, CAPTURE);
+  assert.equal(file, path.join(dir, 'captures', '20261023T171919123Z-term_abc-detected.json'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { version: 1, watchdogVersion: VERSION, ...CAPTURE });
+  assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify({ version: 1, watchdogVersion: VERSION, ...CAPTURE }, null, 2) + '\n');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+});
+
+test('DOG-72: capture retention keeps the newest 50 and leaves other files alone', (t) => {
+  const dir = captureDir(t), folder = path.join(dir, 'captures');
+  fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder, 'notes.txt'), 'keep me');
+  const names = [];
+  for (let i = 0; i < 52; i++) {
+    const at = new Date(Date.parse(CAPTURE.at) + i * 1000).toISOString();
+    const reason = i % 2 ? 'send' : 'detected';
+    watchdog.writeCapture(dir, { ...CAPTURE, at, reason });
+    names.push(`${at.replace(/[-:.]/g, '')}-term_abc-${reason}.json`);
+  }
+  assert.deepEqual(fs.readdirSync(folder).sort(), [...names.slice(2), 'notes.txt'].sort());
+  assert.equal(fs.readFileSync(path.join(folder, 'notes.txt'), 'utf8'), 'keep me');
+});
+
+test('DOG-72: invalid capture handles throw before writing anything', (t) => {
+  const dir = captureDir(t);
+  for (const handle of ['../x', 'a/b']) {
+    assert.throws(() => watchdog.writeCapture(dir, { ...CAPTURE, handle }), { message: 'invalid capture handle' });
+    assert.deepEqual(fs.readdirSync(dir), []);
+  }
+});
+
+test('DOG-72: a new event captures the complete terminal read', async () => {
+  const read = { tail: OUTAGE_TAIL, draft: 'a draft', source: 'screen' };
+  const h = harness({ tail: OUTAGE_TAIL, terminal: read, terminals: [T] });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.captures, [{ at: at(10).toISOString(), reason: 'detected', handle: H,
+    agentIdentity: 'claude', platform: 'claude', kind: 'outage', patternId: 'claude-api-error',
+    attempt: null, sent: null, read }]);
+});
+
+for (const sendThrows of [false, true]) {
+  test(`DOG-72: a ${sendThrows ? 'failed' : 'successful'} send captures its pre-send read and persisted attempt`, async () => {
+    const read = { tail: OUTAGE_TAIL, source: 'pre-send', draft: '' };
+    const h = harness({ terminals: [T], state: seed(), reads: [{ tail: OUTAGE_TAIL, source: 'first' }, read], sendThrows });
+    await tick({ dryRun: false }, h.deps);
+    assert.deepEqual(h.captures, [{ at: at(10).toISOString(), reason: 'send', handle: H,
+      agentIdentity: 'claude', platform: 'claude', kind: 'outage', patternId: 'claude-api-error',
+      attempt: 1, sent: !sendThrows, read }]);
+    assert.deepEqual(h.sent, sendThrows ? [] : [OUTAGE_RESUME_TEXT]);
+    assert.equal(h.saved()[H].attempts, 1);
+    assert.equal(h.saved()[H].status, 'resumed');
+  });
+}
+
+test('DOG-72: dry-run detection and due sends save no captures', async () => {
+  const other = { ...T, handle: 'term_new' };
+  const h = harness({ tail: OUTAGE_TAIL, terminals: [T, other], state: seed() });
+  await tick({ dryRun: true }, h.deps);
+  assert.deepEqual(h.captures, []);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved(), null);
+  assert.deepEqual(h.orcaCalls.map(args => args.slice(0, 2)), [['terminal', 'list'], ['terminal', 'read'], ['terminal', 'read']]);
+});
+
+test('DOG-72: failed captures warn without blocking detection, send or state persistence', async () => {
+  let state = {};
+  for (const now of [at(0), at(10)]) {
+    const h = harness({ tail: OUTAGE_TAIL, terminals: [T], state, now });
+    const logs = [];
+    h.deps.saveCapture = () => { throw new Error('disk\nfailed'); };
+    h.deps.log = (level, message) => logs.push([level, message]);
+    await tick({ dryRun: false }, h.deps);
+    assert.deepEqual(logs.filter(([level]) => level === 'warn'), [['warn', 'capture failed for term_abc: disk failed']]);
+    assert.deepEqual(h.sent, now.getTime() === at(0).getTime() ? [] : [OUTAGE_RESUME_TEXT]);
+    state = h.saved();
+    assert.equal(state[H].attempts, now.getTime() === at(0).getTime() ? 0 : 1);
+  }
+});
+
+test('DOG-72: an existing event not yet due records no capture', async () => {
+  const h = harness({ tail: OUTAGE_TAIL, terminals: [T], state: seed(), now: at(1) });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.captures, []);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].attempts, 0);
+});
+
+test('DOG-72: pre-send replacement captures the new kind without sending', async () => {
+  const read = { tail: CREDITS_TAIL, source: 'replacement', draft: 'draft' };
+  const h = harness({ terminals: [T], state: seed(), reads: [{ tail: OUTAGE_TAIL }, read] });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.captures, [{ at: at(10).toISOString(), reason: 'detected', handle: H,
+    agentIdentity: 'claude', platform: 'claude', kind: 'credits', patternId: 'credits',
+    attempt: null, sent: null, read }]);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].kind, 'credits');
+  assert.equal(h.saved()[H].attempts, 0);
 });
