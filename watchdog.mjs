@@ -298,11 +298,12 @@ export const OUTAGE_PATTERNS = PROVIDERS.flatMap((p) =>
     platforms: o.alsoUnknown ? [p.id, 'unknown'] : [p.id] })));
 const RETRY_RE = /retrying in \d|attempt \d+\s*(\/|of)\s*\d+|Reconnecting\.\.\. (\d+\/\d+|waiting for network)|esc to interrupt/i;
 // Lines allowed AFTER the error for it to count as the final, stalled banner.
+const CODEX_IDLE_COMPOSER_RE = /^›(\s+Ask Codex to do anything)?\s*$/;
 const CHROME_RES = [
   /^$/,
   /^[─│╭╮╰╯┃━┌┐└┘├┤⎿\s]+$/,
   /^>(\s.*)?$/,
-  /^›(\s+Ask Codex to do anything)?\s*$/,
+  CODEX_IDLE_COMPOSER_RE,
   /^\d+% context left$/,
   /^Context \d+% used\b/,
   /^─+\s*Worked for [^─]*─+$/,
@@ -877,10 +878,10 @@ export function isShellPrompt(tail, agentIdentity) {
   return SHELL_PROMPT_RE.test(last);
 }
 
-// True when the input area already holds unsubmitted text — an agent input box
-// draft, or a shell prompt carrying a typed command. A send would be appended to
-// it and --enter would submit both, so the tick skips and the event stays as it
-// is (spec §6.4 spirit).
+// True for a non-empty string draft from the read, or unsubmitted text in the
+// tail. Only INPUT_DRAFT_RE lines below the last idle Codex composer count;
+// without an idle composer, all lines count. A send would append and submit both
+// texts, so the tick skips and leaves the event unchanged (spec §6.4 spirit).
 const INPUT_DRAFT_RE = /^[>›]\s+(?!Ask Codex to do anything\s*$)\S/;
 // A shell prompt glyph (deliberately excluding ">", which is the agent box and a
 // shell redirect) preceded by start/space and FOLLOWED by whitespace + a command.
@@ -892,8 +893,8 @@ export function isInputOccupied(tail, platform = 'unknown', draft) {
   // .trim() (both ends) mirrors detection, so an indented draft ("  > text") is
   // not missed. Strictly safer: it can only add skips, never a send (DOG-24).
   const lines = tail.map((l) => stripAnsi(l).trim());
-  const composer = lines.findLast((l) => /^[>›]/.test(l));
-  if (composer !== undefined && INPUT_DRAFT_RE.test(composer)) return true;
+  const idleComposer = lines.findLastIndex((l) => CODEX_IDLE_COMPOSER_RE.test(l));
+  if (lines.some((l, i) => i > idleComposer && INPUT_DRAFT_RE.test(l))) return true;
   if (platform === 'claude' && lines.some((l, i) => /^❯\s+\S/.test(l)
     && /^─+$/.test(lines[i - 1] ?? '') && /^─+$/.test(lines[i + 1] ?? ''))) return true;
   const providerDraft = providerFor(platform)?.chrome?.draft ?? [];

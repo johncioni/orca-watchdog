@@ -3143,6 +3143,27 @@ test('DOG-69: older-host Codex distinguishes history from a typed composer', () 
   assert.equal(isInputOccupied(tail.map(l => l === '›' ? '› fix the flaky test' : l), 'codex'), true);
 });
 
+for (const [name, draftRows] of [
+  ['Python continuation', ['› why does this fail?', '  >>> import foo', '  ModuleNotFoundError: No module named foo']],
+  ['unspaced quote continuation', ['› reword this:', '  >the old text']],
+  ['bare quote continuation', ['› reword this:', '  > first', '  >']],
+]) {
+  test(`DOG-69: older-host Codex keeps a draft occupied with ${name}`, () => {
+    const tail = [
+      '• ok',
+      '  Worked for 2s • 10:19 AM',
+      ...draftRows,
+      '  Context 4% used · weekly 59% left · GPT-6.1-Sol low · dog-69 · Ready · Custom permissions',
+    ];
+    assert.equal(isInputOccupied(tail, 'codex'), true);
+  });
+}
+
+test('DOG-69: draft lines below the last idle composer still count', () => {
+  assert.equal(isInputOccupied(['› old prompt', '›', '> first', '› Ask Codex to do anything', CODEX_FOOTER], 'codex'), false);
+  assert.equal(isInputOccupied(['› old prompt', '›', '> first', CODEX_FOOTER], 'codex'), true);
+});
+
 for (const platform of ['claude', 'codex']) {
   test(`DOG-69: due ${platform} limit ${platform === 'claude' ? 'skips a fresh draft' : 'resumes past prompt history'}`, async () => {
     const bannerText = 'Usage limit reached. Your limit will reset at 3am.';
