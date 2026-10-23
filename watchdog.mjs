@@ -887,11 +887,13 @@ const INPUT_DRAFT_RE = /^[>›]\s+(?!Ask Codex to do anything\s*$)\S/;
 // The empty prompt ("~ %") has nothing after the glyph, so it does not match and
 // is left to isShellPrompt's exited-to-shell drop (DOG-24).
 const SHELL_CMD_RE = /(?:^|\s)[$%#❯➜λ❱]\s+\S/;
-export function isInputOccupied(tail, platform = 'unknown') {
+export function isInputOccupied(tail, platform = 'unknown', draft) {
+  if (typeof draft === 'string' && draft.length > 0) return true;
   // .trim() (both ends) mirrors detection, so an indented draft ("  > text") is
   // not missed. Strictly safer: it can only add skips, never a send (DOG-24).
   const lines = tail.map((l) => stripAnsi(l).trim());
-  if (lines.some((l) => INPUT_DRAFT_RE.test(l))) return true;
+  const composer = lines.findLast((l) => /^[>›]/.test(l));
+  if (composer !== undefined && INPUT_DRAFT_RE.test(composer)) return true;
   if (platform === 'claude' && lines.some((l, i) => /^❯\s+\S/.test(l)
     && /^─+$/.test(lines[i - 1] ?? '') && /^─+$/.test(lines[i + 1] ?? ''))) return true;
   const providerDraft = providerFor(platform)?.chrome?.draft ?? [];
@@ -1197,7 +1199,7 @@ async function readTail(handle, orcaFn = orca) {
   const r = await orcaFn(['terminal', 'read', '--terminal', handle]);
   const tail = r?.terminal?.tail;
   if (!Array.isArray(tail)) throw new Error('terminal read returned no tail array');
-  return tail;
+  return { tail, draft: r.terminal.draft };
 }
 
 const DEFAULT_DEPS = () => ({ orca, fetchImpl: globalThis.fetch, env: process.env, now: () => new Date(), loadState, saveState, log,
@@ -1237,7 +1239,7 @@ export async function tick({ dryRun }, depsIn = {}) {
       const t = queue.shift();
       attemptedReads += 1;
       try {
-        const tail = await readTail(t.handle, deps.orca);
+        const { tail } = await readTail(t.handle, deps.orca);
         const banner = detectBanner(tail, inferPlatform(t), deps.now());
         if (!banner && shouldLog('debug') && hasOutageLine(tail)) {
           const blocker = classifyOutageNearMiss(tail, inferPlatform(t));
@@ -1385,8 +1387,8 @@ export async function tick({ dryRun }, depsIn = {}) {
       waiting(ev.handle, 'busy terminal');
       log('info', `skip ${ev.handle}: not idle (${describeOrcaError(e)})`); continue;
     }
-    let tail;                                                                        // 3. fresh re-read
-    try { tail = await readTail(ev.handle, deps.orca); } catch (e) {
+    let tail, draft;                                                                 // 3. fresh re-read
+    try { ({ tail, draft } = await readTail(ev.handle, deps.orca)); } catch (e) {
       waiting(ev.handle, 'failed read');
       log('warn', `skip ${ev.handle}: re-read failed (${describeOrcaError(e)}); event untouched`); continue;
     }
@@ -1431,7 +1433,7 @@ export async function tick({ dryRun }, depsIn = {}) {
       observe('resolved', ev.handle);   // the event is gone: don't leave a stale waiting reason in status
       delete events[key]; deps.saveState(events); continue;
     }
-    if (isInputOccupied(tail, ev.platform)) {                                        // 4b. draft guard
+    if (isInputOccupied(tail, ev.platform, draft)) {                                 // 4b. draft guard
       waiting(ev.handle, 'draft input');
       log('info', `skip ${ev.handle}: input box holds a draft; event untouched`); continue;
     }
