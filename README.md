@@ -311,7 +311,7 @@ identity.
 
 | Agent | Rate limit | API outage | Status feed | Notes |
 |---|---|---|---|---|
-| Claude Code | yes | yes | `status.claude.com` (Statuspage) | Orca identities `claude` and `claude-agent-teams`. Supports `You've hit your session limit · resets <time> (<IANA zone>)` and the existing Claude limit forms. |
+| Claude Code | yes (+ credits retry) | yes | `status.claude.com` (Statuspage) | Orca identities `claude` and `claude-agent-teams`. Supports `You've hit your session limit · resets <time> (<IANA zone>)` and the existing Claude limit forms. |
 | Codex | yes (+ reset-less alert) | yes (`■` error line) | `status.openai.com` (Statuspage) | Held while `Reconnecting… N/5` is on screen. |
 | Gemini CLI | yes | no | Google Cloud `incidents.json`, product *Vertex Gemini API* | `Usage limit reached for <model>.` / `Access resets at <time>.` A zone abbreviation after the clock (`3:00 PM PST`) is honoured at its fixed offset; a bare clock is read as local time. Gemini's high-demand fallback line is transient and self-heals, so no outage rule. |
 

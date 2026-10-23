@@ -1883,6 +1883,47 @@ test('DOG-70 detection: both Claude prefixes and apostrophes, independent of mod
   }
 });
 
+const CREDITS_NARROW_LINES = [
+  "  ⎿  You're out of usage credits. Run /usage-credits to",
+  '     keep using Fable 5.1 or /model to switch models.',
+];
+const creditsInNarrowEnvelope = (lines) => [
+  ...CLAUDE_SESSION_LIMIT_NARROW.slice(0, 19),
+  ...lines,
+  ...CLAUDE_SESSION_LIMIT_NARROW.slice(22),
+];
+
+for (const [name, lines, prefix] of [
+  ['55-column error', CREDITS_NARROW_LINES, '⎿ '],
+  ['55-column message', [
+    "⏺ You're out of usage credits. Run /usage-credits to",
+    '  keep using Fable 5.1 or /model to switch models.',
+  ], '⏺ '],
+  ['100-column error', [
+    "  ⎿  You're out of usage credits. Run /usage-credits to keep using Fable 5.1 or /model to switch",
+    '     models.',
+  ], '⎿ '],
+]) {
+  test(`DOG-70 detection: wrapped credits in the ${name} envelope`, () => {
+    const banner = detectBanner(creditsInNarrowEnvelope(lines), 'claude', NOW);
+    assert.equal(banner?.kind, 'credits');
+    assert.equal(banner.bannerText, prefix + CREDITS_TEXT);
+  });
+}
+
+test('DOG-70 detection: a wrapped credits block must end before unrelated indented output', () => {
+  assert.equal(detectBanner(creditsInNarrowEnvelope(CREDITS_NARROW_LINES), 'claude', NOW)?.kind, 'credits');
+  assert.equal(detectBanner(creditsInNarrowEnvelope([
+    ...CREDITS_NARROW_LINES, '     and then some other output.',
+  ]), 'claude', NOW), null);
+});
+
+test('DOG-70 detection: a credits sentence without the message ending is prose', () => {
+  assert.equal(detectBanner(creditsInNarrowEnvelope([
+    "⏺ You're out of usage credits. That explains the stop.",
+  ]), 'claude', NOW), null);
+});
+
 test('DOG-70 detection: only Claude error lines above the input box count', () => {
   assert.equal(detectBanner(CREDITS_TAIL, 'claude', NOW)?.kind, 'credits');
   for (const platform of ['codex', 'gemini', 'unknown']) {
@@ -1911,7 +1952,7 @@ test('DOG-70 detection: newer credits win arbitration and later work, outages or
     '⎿ Retrying in 30 seconds', '⎿ attempt 1/3', 'ordinary agent output']) {
     assert.equal(detectBanner([CREDITS_TAIL[0], newer, ...CREDITS_BOX], 'claude', NOW), null, newer);
   }
-  for (const [newer, kind] of [[outage, 'outage'], [limit, 'limit']]) {
+  for (const [newer, kind] of [[outage, 'outage'], [limit, 'limit'], [`⎿ ${limit}`, 'limit']]) {
     assert.equal(detectBanner([CREDITS_TAIL[0], newer, ...CREDITS_BOX], 'claude', NOW)?.kind, kind);
   }
   assert.equal(detectBanner([...CREDITS_TAIL, '⏺ Footer info', outage, 'Retrying in 1 second'], 'claude', NOW)?.kind,

@@ -550,11 +550,21 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   let pick = (limit && outage) ? (limit.reachedIndex >= outage.index ? limit : outage) : (limit ?? outage);
   if (platformSupports(platform, 'credits')) {
     const r = lastIndex(window, (line, i) => beforeInputBox(line, i) && CREDITS_RE.test(line));
-    if (r >= 0 && !staleAfter(r) && window.slice(r + 1).every((_line, offset) =>
-      isTrailingChromeAt(platform, window, r + 1 + offset, platformFooterStart))
-      && (!pick || r >= (pick.reachedIndex ?? pick.index))) {
-      pick = { kind: 'credits', resetAt: null, bannerText: sanitize(window[r], 600),
-        matchedLine: window[r], patternId: 'credits', index: r };
+    if (r >= 0 && !staleAfter(r)) {
+      let trailingStart = r + 1;
+      while (trailingStart <= r + 4 && trailingStart < window.length
+        && !isTrailingChromeAt(platform, window, trailingStart, platformFooterStart)
+        && /^[ \t]+\S/.test(sourceWindow[trailingStart])) {
+        trailingStart++;
+      }
+      const block = window.slice(r, trailingStart).join(' ');
+      if (block.endsWith('/model to switch models.')
+        && window.slice(trailingStart).every((_line, offset) =>
+          isTrailingChromeAt(platform, window, trailingStart + offset, platformFooterStart))
+        && (!pick || r >= (pick.reachedIndex ?? pick.index))) {
+        pick = { kind: 'credits', resetAt: null, bannerText: sanitize(block, 600),
+          matchedLine: window[r], patternId: 'credits', index: r };
+      }
     }
   }
   if (!pick) return null;
