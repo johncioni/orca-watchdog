@@ -103,7 +103,7 @@ test('plist rendering XML-escapes executable and data paths', async () => {
   assert.doesNotMatch(xml, /__\w+__/);
 });
 
-test('plist declares the LaunchAgent as a throttleable Background process', async () => {
+test('plist leaves the LaunchAgent at the default process type', async () => {
   const { renderPlist } = await loadManagement();
   const xml = renderPlist({
     nodePath: '/usr/local/bin/node',
@@ -111,9 +111,8 @@ test('plist declares the LaunchAgent as a throttleable Background process', asyn
     stateDir: '/tmp/state',
     orcaPath: '/usr/local/bin/orca',
   });
-  // A background poller (StartInterval 300s) should tell launchd it may be throttled
-  // under the system power policy — the macOS-idiomatic power-citizenship declaration.
-  assert.match(xml, /<key>ProcessType<\/key>\s*<string>Background<\/string>/);
+  // launchd background throttling made concurrent Orca CLI calls time out (DOG-65).
+  assert.doesNotMatch(xml, /<key>ProcessType<\/key>/);
 });
 
 test('executable resolution rejects missing and non-executable paths clearly', async () => {
