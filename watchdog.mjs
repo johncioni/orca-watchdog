@@ -449,7 +449,7 @@ const CODEX_TIME = String.raw`(?:[A-Za-z]+ \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})? 
 const CODEX_TRY = `try again at ${CODEX_TIME}\\.?`;
 const CODEX_LIMIT_FORMS = [
   new RegExp(`^■\\s*exceeded retry limit, last status: 429(?: Too Many Requests)?(?:[.]? ${CODEX_TRY})?$`, 'i'),
-  new RegExp(`^■\\s*You've hit your usage limit\\.(?: Upgrade to Pro \\(https?://\\S+\\), visit https?://\\S+ to purchase more credits(?: or ${CODEX_TRY})?\\.?| ${CODEX_TRY})?$`, 'i'),
+  new RegExp(`^■\\s*You['’]ve hit your usage limit\\.(?: Upgrade to Pro \\(https?://\\S+\\), visit https?://\\S+ to purchase more credits(?: or ${CODEX_TRY})?\\.?| ${CODEX_TRY})?$`, 'i'),
   /^■\s*usage limit reached, try again later\.?$/i,
 ];
 
