@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.16 - 2026-10-23
+
+### Added
+
+- Resume Claude sessions stopped by "You're out of usage credits". The message gives no reset time, so the watchdog sends the usual resume prompt 6 hours after it appears and every 6 hours after that, for up to 7 days, until the session gets going again. It never buys credits or switches models. A message wrapped over several lines on a narrow pane is detected too. (DOG-70)
+
 ## 1.2.15 - 2026-10-23
 
 ### Fixed
