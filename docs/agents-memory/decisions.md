@@ -5,7 +5,7 @@ Newest first. Format and rules: `README.md` in this directory.
 ## 2026-10-23: Out-of-credits Claude sessions get blind resumes, never a purchase
 
 Credits never reset and the allowance's reset time is not on screen, so a `credits` event
-resumes blindly every 6 h for 7 days (27 sends) and never sends `/usage-credits` or `/model`
+resumes blindly every 6 h for up to 7 days (at most 27 sends) and never sends `/usage-credits` or `/model`
 (John's call). Detection anchors on the message's first sentence and its ending; John declined
 a whole-message match (DOG-71) because a reword would then miss silently, as Codex drift does.
 PR: https://github.com/johncioni/orca-watchdog/pull/99, https://linear.app/johncioni/issue/DOG-71
