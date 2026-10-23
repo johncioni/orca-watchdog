@@ -3075,6 +3075,130 @@ test('tick: an out-of-range reset banner creates an event with a fallback reset 
   assert.deepEqual(h.sent, []);
 });
 
+// Orca 1.4.237 captures, 2026-10-23: final rows, excluding the Electron error.
+const DOG69_CODEX_HISTORY = [
+  '    Sent msg_d2327c6e433d',
+  '    + Show details',
+  '  Worked for 11s • 10:18 AM',
+  '› Reply with the single word ok. Do not run any command or tool.',
+  '• ok',
+  '  Worked for 2s • 10:19 AM',
+  '› Ask Codex to do anything',
+  '  Context 4% used · weekly 59% left · GPT-6.1-Sol low · dog-69 · Ready · Custom permissions',
+  '  ? for shortcuts',
+];
+const DOG69_CODEX_DRAFT = [
+  '    Sent msg_d2327c6e433d',
+  '    + Show details',
+  '  Worked for 11s • 10:18 AM',
+  '› Reply with the single word ok. Do not run any command or tool.',
+  '• ok',
+  '  Worked for 2s • 10:19 AM',
+  '›',
+  '  Context 4% used · weekly 59% left · GPT-6.1-Sol low · dog-69 · Ready · Custom permissions',
+];
+const DOG69_CLAUDE_HISTORY = [
+  '❯ Reply with the single word ok. Do not use any tool.',
+  '⏺ ok',
+  '✻ Cogitated for 3s · done 10:23 AM',
+  '───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────',
+  '❯',
+  '───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────',
+  '  [Haiku 5.5 ○ low] │ dog-69',
+  '  Context ░░░░░░░░░░ 4% │ Usage 5h 9% · 7d 42% │ $0.0073 │ 22s',
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
+];
+const DOG69_CLAUDE_DRAFT = [
+  '❯ Reply with the single word ok. Do not use any tool.',
+  '⏺ ok',
+  '✻ Cogitated for 3s · done 10:23 AM',
+  '───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────',
+  '❯',
+  '───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────',
+  '  [Haiku 5.5 ○ low] │ dog-69',
+  '  Context ░░░░░░░░░░ 4% │ Usage 5h 9% · 7d 42% │ $0.0073 │ 22s',
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+];
+
+test('DOG-69: Codex history is idle unless the read carries a draft', () => {
+  assert.equal(isInputOccupied(DOG69_CODEX_HISTORY, 'codex'), false);
+  assert.equal(isInputOccupied(DOG69_CODEX_HISTORY, 'codex', 'draft probe do not submit'), true);
+  assert.equal(isInputOccupied(DOG69_CODEX_DRAFT, 'codex', 'draft probe do not submit'), true);
+});
+
+test('DOG-69: Claude history stays idle but a separate draft occupies its bare box', () => {
+  assert.equal(isInputOccupied(DOG69_CLAUDE_HISTORY, 'claude'), false);
+  for (const platform of ['claude', 'codex', 'gemini', 'unknown']) {
+    assert.equal(isInputOccupied(DOG69_CLAUDE_DRAFT, platform, 'draft probe do not submit'), true, platform);
+    assert.equal(isInputOccupied(DOG69_CLAUDE_DRAFT, platform, ' '), true, platform);
+    for (const draft of [undefined, '', null, 42]) {
+      assert.equal(isInputOccupied(DOG69_CLAUDE_DRAFT, platform, draft), false, platform);
+    }
+  }
+});
+
+test('DOG-69: older-host Codex distinguishes history from a typed composer', () => {
+  const tail = DOG69_CODEX_HISTORY.map(l => l === '› Ask Codex to do anything' ? '›' : l);
+  assert.equal(isInputOccupied(tail, 'codex'), false);
+  assert.equal(isInputOccupied(tail.map(l => l === '›' ? '› fix the flaky test' : l), 'codex'), true);
+});
+
+for (const [name, draftRows] of [
+  ['Python continuation', ['› why does this fail?', '  >>> import foo', '  ModuleNotFoundError: No module named foo']],
+  ['unspaced quote continuation', ['› reword this:', '  >the old text']],
+  ['bare quote continuation', ['› reword this:', '  > first', '  >']],
+  ['indented idle placeholder (screen E)', ['› why is this idle?', '  • ok', '  › Ask Codex to do anything']],
+  ['indented bare composer (screen F)', ['› reword this:', '  ›', '  the old text']],
+]) {
+  test(`DOG-69: older-host Codex keeps a draft occupied with ${name}`, () => {
+    const tail = [
+      '• ok',
+      '  Worked for 2s • 10:19 AM',
+      ...draftRows,
+      '  Context 4% used · weekly 59% left · GPT-6.1-Sol low · dog-69 · Ready · Custom permissions',
+    ];
+    assert.equal(isInputOccupied(tail, 'codex'), true);
+  });
+}
+
+test('DOG-69: draft lines below the last idle composer still count', () => {
+  assert.equal(isInputOccupied(['› old prompt', '›', '> first', '› Ask Codex to do anything', CODEX_FOOTER], 'codex'), false);
+  assert.equal(isInputOccupied(['› old prompt', '›', '> first', CODEX_FOOTER], 'codex'), true);
+});
+
+for (const platform of ['claude', 'codex']) {
+  test(`DOG-69: due ${platform} limit ${platform === 'claude' ? 'skips a fresh draft' : 'resumes past prompt history'}`, async () => {
+    const bannerText = 'Usage limit reached. Your limit will reset at 3am.';
+    const rows = platform === 'claude' ? DOG69_CLAUDE_DRAFT : DOG69_CODEX_HISTORY;
+    const boundary = platform === 'claude' ? 3 : 6;
+    const tail = [...rows.slice(0, boundary), bannerText, ...rows.slice(boundary)];
+    const state = { [H]: { ...LIMIT_EV, platform, bannerText,
+      detectedAt: at(-60).toISOString(), resetAt: at(-30).toISOString(),
+      attempts: 0, lastAttemptAt: null, status: 'waiting', alertedAt: null } };
+    const h = harness({ tail, terminals: [{ ...T, agentIdentity: platform }], state });
+    const inner = h.deps.orca;
+    let reads = 0;
+    h.deps.orca = async args => {
+      if (args[1] === 'read' && ++reads === 2 && platform === 'claude') {
+        return { terminal: { tail, draft: 'draft probe do not submit' } };
+      }
+      return inner(args);
+    };
+    const logs = [];
+    h.deps.log = (level, message) => logs.push(message);
+    await tick({ dryRun: false }, h.deps);
+    assert.equal(reads, 2);
+    if (platform === 'claude') {
+      assert.deepEqual(h.sent, []);
+      assert.ok(logs.some(line => line.includes('input box holds a draft')));
+      assert.equal(h.saved()[H].attempts, 0);
+    } else {
+      assert.deepEqual(h.sent, [RESUME_TEXT]);
+      assert.equal(h.saved()[H].attempts, 1);
+    }
+  });
+}
+
 test('isInputOccupied: a ">" line with text after it is a user draft', () => {
   assert.equal(isInputOccupied(['API Error: 529', '> my half typed draft', '? for shortcuts']), true);
   assert.equal(isInputOccupied(['API Error: 529', '> ', '? for shortcuts']), false);
