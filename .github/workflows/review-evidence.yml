@@ -4,9 +4,13 @@ name: review-evidence
 # Every PR body must carry review evidence:
 #   Reviewed by <reviewer>, N round(s)      -> pass
 #   Review skipped: <rule>                  -> pass only if the diff is skip-eligible:
-#                                              no invariant path touched (see .github/review-invariants.txt)
-#                                              no changed file retaining a suppression or changing a required check
+#                                              no invariant path touched (see .github/review-invariants.txt;
+#                                              matched ignoring ASCII case; any non-ASCII path counts as one)
+#                                              no changed file retaining a suppression or changing what a
+#                                              required lint, type, test or scan check runs
 #                                              and (docs/test-only OR <= MAX_SKIP_LINES changed)
+# Docs are *.md and *.mdx anywhere, a root LICENSE* or CHANGELOG*, and text, HTML, JSON,
+# image and PDF files under docs/.
 # Renovate/Dependabot PRs are exempt only while they touch no invariant path
 # and pass the suppression and check-config rules; a bot PR that fails either
 # needs a human to run a review round and add the
@@ -164,10 +168,21 @@ jobs:
           fi
 
           # --- Suppressions and required-check configuration (including bot PRs) ---
-          is_docs() {
+          is_excluded() {
             case "$1" in
-              requirements*.txt|*.lock|*/robots.txt|robots.txt|CMakeLists.txt) return 1 ;;
-              *.md|*.mdx|docs/*|LICENSE*|CHANGELOG*) return 0 ;;
+              requirements*.txt|*/requirements*.txt|*.lock|robots.txt|*/robots.txt|CMakeLists.txt|*/CMakeLists.txt) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          is_docs() {
+            if is_excluded "$1"; then return 1; fi
+            case "$1" in
+              *.md|*.mdx) return 0 ;;
+              */*) ;;
+              LICENSE*|CHANGELOG*) return 0 ;;
+            esac
+            case "$1" in
+              docs/*.txt|docs/*.html|docs/*.json|docs/*.png|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.svg|docs/*.webp|docs/*.pdf) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -215,6 +230,7 @@ jobs:
             'ts-ignore' 'ts-expect-error' 'ts-nocheck' 'biome-ignore'
             'swiftlint:disable' 'stylelint-disable' 'shellcheck disable'
             'noqa' 'type: ignore' 'pyright: ignore' 'gitleaks:allow'
+            'ruff/flake8 noqa' 'mypy inline config' 'eslint exported'
           )
           suppression_patterns=(
             'eslint-disable' '/\*[^[:alnum:]]*eslint' '/\*[^[:alnum:]]*globals?([^[:alnum:]]|$)'
@@ -222,6 +238,7 @@ jobs:
             'swiftlint:disable' 'stylelint-disable' 'shellcheck[^[:alnum:]]+disable'
             '#[^[:alnum:]]*noqa' '#[^[:alnum:]]*type[^[:alnum:]]*ignore'
             '#[^[:alnum:]]*pyright[^[:alnum:]]*ignore' 'gitleaks:allow'
+            '#[^[:alnum:]]*(ruff|flake8)[^[:alnum:]]*noqa' '#[^[:alnum:]]*mypy[^[:alnum:]]*:' '/\*[^[:alnum:]]*exported([^[:alnum:]]|$)'
           )
           printf -v suppression_union '%s|' "${suppression_patterns[@]}"
           suppression_union="${suppression_union%|}"
@@ -239,7 +256,7 @@ jobs:
               basename="${basename,,}"
               case "$basename" in
                 package.json) if [[ -z "$manifest_path" ]]; then manifest_path="$f"; fi ;;
-                .npmrc|.yarnrc|.yarnrc.yml|eslint.config.*|.eslintrc*|.eslintignore|tsconfig*.json|jsconfig*.json|biome.json|biome.jsonc|.swiftlint*.yml|.swiftlint-baseline.json|.stylelintrc*|.shellcheckrc|ruff.toml|.ruff.toml|.flake8|mypy.ini|pyrightconfig.json|.gitleaks.toml|.gitleaksignore)
+                .npmrc|.yarnrc|.yarnrc.yml|eslint.config.*|.eslintrc*|.eslintignore|tsconfig*.json|jsconfig*.json|biome.json|biome.jsonc|.swiftlint*.yml|.swiftlint-baseline.json|.stylelintrc*|.shellcheckrc|ruff.toml|.ruff.toml|.flake8|mypy.ini|pyrightconfig.json|.gitleaks.toml|.gitleaksignore|vitest.config.*|vitest.workspace.*|vite.config.*|playwright.config.*|jest.config.*|.mocharc*|cypress.config.*|karma.conf.*|ava.config.*|*.xctestplan|stylelint.config.*|.stylelintignore|pyproject.toml|setup.cfg|tox.ini)
                   hits+=("$f: config") ;;
               esac
             done
@@ -312,9 +329,7 @@ jobs:
           # --- 2. Docs/test-only diffs may skip at any size; everything else must be small ---
           docs_or_tests_only=true
           for f in "${files[@]}"; do
-            case "$f" in
-              requirements*.txt|*.lock|*/robots.txt|robots.txt|CMakeLists.txt) docs_or_tests_only=false; break ;;
-            esac
+            if is_excluded "$f"; then docs_or_tests_only=false; break; fi
             if is_docs "$f"; then continue; fi
             case "$f" in
               *.test.*|*.spec.ts|*.spec.tsx|*.spec.js|*.spec.jsx|*.spec.mjs|*Tests.swift|tests/*|*/tests/*|test/*|*/test/*|*/__tests__/*|*/__fixtures__/*|*/fixtures/*|e2e/*|*/e2e/*) ;;
