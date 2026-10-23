@@ -1864,6 +1864,167 @@ function harness({ tail, terminals, indicator = 'none', state = {}, now = at(10)
 const T = { handle: H, connected: true, writable: true, agentIdentity: 'claude' };
 const OUTAGE_TAIL = [CLAUDE_529, '', '> ', '? for shortcuts'];
 
+// DOG-70: transcript wording with replayed prefixes; no live screen capture.
+const CREDITS_TEXT = "You're out of usage credits. Run /usage-credits to keep using Fable 5.1 or /model to switch models.";
+const CREDITS_BOX = ['──────────', '❯', '──────────'];
+const CREDITS_TAIL = [`⎿ ${CREDITS_TEXT}`, ...CREDITS_BOX];
+
+test('DOG-70 detection: both Claude prefixes and apostrophes, independent of model name', () => {
+  for (const prefix of ['⎿', '⏺']) {
+    for (const apostrophe of ["'", '’']) {
+      for (const model of ['Fable 5.1', 'another model']) {
+        const line = `${prefix} ${CREDITS_TEXT.replace("'", apostrophe).replace('Fable 5.1', model)}`;
+        const banner = detectBanner([line, ...CREDITS_BOX], 'claude', NOW);
+        assert.equal(banner?.kind, 'credits');
+        assert.equal(banner.resetAt, null);
+        assert.equal(banner.bannerText, line);
+      }
+    }
+  }
+});
+
+test('DOG-70 detection: only Claude error lines above the input box count', () => {
+  assert.equal(detectBanner(CREDITS_TAIL, 'claude', NOW)?.kind, 'credits');
+  for (const platform of ['codex', 'gemini', 'unknown']) {
+    assert.equal(detectBanner(CREDITS_TAIL, platform, NOW), null, platform);
+  }
+  for (const line of [
+    '⎿ Fable limit reached · continuing on Fable 5.1 uses usage credits',
+    '⎿ API Error: Usage credits required for 1M context · run /usage-credits to enable',
+    "⎿ You've hit your monthly spend limit · raise it at claude.ai/settings",
+    '⎿ Credit balance is too low',
+    `⏺ The message says "${CREDITS_TEXT}"`,
+    `⎿ tool result: ${CREDITS_TEXT}`,
+    `⎿ "${CREDITS_TEXT}"`,
+    CREDITS_TEXT,
+  ]) assert.equal(detectBanner([line, ...CREDITS_BOX], 'claude', NOW), null, line);
+  assert.equal(detectBanner([...CREDITS_BOX, CREDITS_TAIL[0]], 'claude', NOW), null);
+});
+
+test('DOG-70 detection: newer credits win arbitration and later work, outages or retries stale them', () => {
+  const limit = 'Claude usage limit reached. Your limit will reset at 3am.';
+  const outage = '⎿ API Error: 503 Service Unavailable';
+  for (const older of [limit, outage]) {
+    assert.equal(detectBanner([older, ...CREDITS_TAIL], 'claude', NOW)?.kind, 'credits');
+  }
+  for (const newer of ['⏺ Working again', '⏺ Servers available again soon',
+    '⎿ Retrying in 30 seconds', '⎿ attempt 1/3', 'ordinary agent output']) {
+    assert.equal(detectBanner([CREDITS_TAIL[0], newer, ...CREDITS_BOX], 'claude', NOW), null, newer);
+  }
+  for (const [newer, kind] of [[outage, 'outage'], [limit, 'limit']]) {
+    assert.equal(detectBanner([CREDITS_TAIL[0], newer, ...CREDITS_BOX], 'claude', NOW)?.kind, kind);
+  }
+  assert.equal(detectBanner([...CREDITS_TAIL, '⏺ Footer info', outage, 'Retrying in 1 second'], 'claude', NOW)?.kind,
+    'credits', 'footer content is not evidence of later work');
+});
+
+test('DOG-70 validation: credits are Claude-only, round-trip state, and cap attempts at 28', () => {
+  const ev = { ...V2, kind: 'credits', platform: 'claude' };
+  assert.equal(validateEvent(H, ev), null);
+  for (const platform of ['codex', 'gemini', 'unknown']) {
+    assert.match(validateEvent(H, { ...ev, platform }), /platform/);
+  }
+  assert.equal(validateEvent(H, { ...ev, attempts: 28 }), null);
+  assert.match(validateEvent(H, { ...ev, attempts: 29 }), /attempts/);
+  assert.match(validateEvent(H, { ...ev, status: 'awaiting-user' }), /status/);
+  assert.equal(validateEvent(H, { ...ev, attempts: 0, lastAttemptAt: null, status: 'gave_up' }), null);
+  assert.deepEqual(parseStateFile(JSON.stringify({ version: 2, events: { [H]: ev } })), { [H]: ev });
+});
+
+test('DOG-70 creation: eligibility is six hours from detection without parsing a reset', () => {
+  const ev = newEvent({ handle: H, platform: 'claude',
+    banner: { kind: 'credits', bannerText: CREDITS_TAIL[0], resetAt: null } }, NOW);
+  assert.equal(ev.resetAt, at(360).toISOString());
+  assert.equal(ev.detectedAt, NOW.toISOString());
+  assert.equal(ev.status, 'waiting');
+  assert.equal(ev.attempts, 0);
+  assert.equal(validateEvent(H, ev), null);
+});
+
+test('DOG-70 tick: first send at six hours, retries six hours apart, only RESUME_TEXT', async () => {
+  let state = {};
+  for (const [minute, sends, attempts] of [[0, 0, 0], [359, 0, 0], [360, 1, 1],
+    [360.55, 0, 1], [370, 0, 1], [719, 0, 1], [720, 1, 2]]) {
+    const h = harness({ tail: CREDITS_TAIL, terminals: [T], state, now: at(minute) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved();
+    assert.equal(state[H]?.kind, 'credits');
+    assert.equal(state[H].attempts, attempts, `minute ${minute}`);
+    assert.equal(state[H].detectedAt, NOW.toISOString());
+    assert.equal(state[H].resetAt, at(360).toISOString());
+    assert.deepEqual(h.sent, sends ? [RESUME_TEXT] : [], `minute ${minute}`);
+    assert.equal(validateEvent(H, state[H]), null);
+  }
+});
+
+test('DOG-70 tick: attempt cap and seven-day deadline stop retries even with a persistent banner', async () => {
+  const initial = harness({ tail: CREDITS_TAIL, terminals: [T], now: NOW });
+  await tick({ dryRun: false }, initial.deps);
+  assert.equal(initial.saved()[H]?.kind, 'credits');
+  const original = initial.saved()[H];
+  const capped = { ...original, attempts: 28, lastAttemptAt: at(360).toISOString(), status: 'resumed' };
+  const h = harness({ tail: CREDITS_TAIL, terminals: [T], state: { [H]: capped }, now: at(720) });
+  await tick({ dryRun: false }, h.deps);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.saved()[H].status, 'gave_up');
+  assert.equal(h.saved()[H].attempts, 28);
+  for (const minute of [7 * 24 * 60, 7 * 24 * 60 + 1, 8 * 24 * 60]) {
+    const expired = harness({ tail: CREDITS_TAIL, terminals: [T], state: initial.saved(), now: at(minute) });
+    await tick({ dryRun: false }, expired.deps);
+    assert.deepEqual(expired.sent, []);
+    assert.equal(expired.saved()[H].status, 'gave_up');
+    assert.equal(expired.saved()[H].attempts, 0);
+    assert.equal(validateEvent(H, expired.saved()[H]), null);
+  }
+});
+
+test('DOG-70 tick: existing send guards hold credits without spending an attempt', async () => {
+  const initial = harness({ tail: CREDITS_TAIL, terminals: [T], now: NOW });
+  await tick({ dryRun: false }, initial.deps);
+  assert.equal(initial.saved()[H]?.kind, 'credits');
+  for (const guard of ['draft', 'busy', 'fresh-clear', 'shell', 'offline', 'disabled', 'dry-run']) {
+    const h = harness({ tail: CREDITS_TAIL, terminals: [T], state: initial.saved(), now: at(360) });
+    const orca = h.deps.orca;
+    let reads = 0;
+    h.deps.orca = async (args) => {
+      if (guard === 'busy' && args[1] === 'wait') throw new Error('busy');
+      const result = await orca(args);
+      if (args[1] === 'read' && ++reads === 2) {
+        if (guard === 'draft') result.terminal.draft = 'unsubmitted input';
+        if (guard === 'fresh-clear') result.terminal.tail = ['⏺ Working again', ...CREDITS_BOX];
+        if (guard === 'shell') result.terminal.tail = [...CREDITS_TAIL, 'user@host %'];
+      }
+      return result;
+    };
+    if (guard === 'offline') h.deps.fetchImpl = async () => { throw new Error('offline'); };
+    if (guard === 'disabled') h.deps.isDisabled = () => true;
+    await tick({ dryRun: guard === 'dry-run' }, h.deps);
+    assert.deepEqual(h.sent, [], guard);
+    if (guard === 'dry-run') assert.equal(h.saved(), null);
+    else if (guard === 'shell') assert.equal(h.saved()[H], undefined);
+    else assert.equal(h.saved()[H].attempts, 0, guard);
+  }
+});
+
+test('DOG-70 tick: recovery holds immediately and removes credits on a second clear read', async () => {
+  const initial = harness({ tail: CREDITS_TAIL, terminals: [T], now: NOW });
+  await tick({ dryRun: false }, initial.deps);
+  const due = harness({ tail: CREDITS_TAIL, terminals: [T], state: initial.saved(), now: at(360) });
+  await tick({ dryRun: false }, due.deps);
+  assert.deepEqual(due.sent, [RESUME_TEXT]);
+  for (const tail of [CREDITS_BOX, [CREDITS_TAIL[0], '⏺ Working again', ...CREDITS_BOX]]) {
+    const first = harness({ tail, terminals: [T], state: due.saved(), now: at(720) });
+    await tick({ dryRun: false }, first.deps);
+    assert.deepEqual(first.sent, []);
+    assert.equal(first.saved()[H].clearedAt, at(720).toISOString());
+    assert.equal(first.saved()[H].attempts, 1);
+    const second = harness({ tail, terminals: [T], state: first.saved(), now: at(725) });
+    await tick({ dryRun: false }, second.deps);
+    assert.deepEqual(second.sent, []);
+    assert.deepEqual(second.saved(), {});
+  }
+});
+
 const DOG57_P4 = [
   'Claude usage limit reached. Your limit will reset at 9am (America/New_York).',
   '⏺ note',
@@ -4038,7 +4199,7 @@ test('DOG-38 registry: defineProviders rejects malformed entries and duplicate i
   const validProvider = (overrides = {}) => ({
     id: 'test',
     agentIdentity: ['test'],
-    kinds: { limit: true, outage: true, limitOpen: false },
+    kinds: { limit: true, outage: true, limitOpen: false, credits: false },
     limit: { rule: 'generic' },
     outage: [{ id: 'test-error', re: /test error/, alsoUnknown: false,
       envelope: { markers: [/^$/], continuation: null } }],
@@ -4098,7 +4259,7 @@ test('DOG-38 registry: defineProviders supplies inert defaults for optional seam
   const [provider] = watchdog.defineProviders([{
     id: 'test',
     agentIdentity: ['test'],
-    kinds: { limit: true, outage: true, limitOpen: false },
+    kinds: { limit: true, outage: true, limitOpen: false, credits: false },
     limit: { rule: 'generic' },
     status: { kind: 'statuspage', url: 'https://status.example.test/api/v2/status.json' },
   }]);

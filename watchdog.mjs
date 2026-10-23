@@ -35,6 +35,8 @@ export const SCHEDULE = Object.freeze({
     initialDelayMs: 10 * MIN, resumeText: OUTAGE_RESUME_TEXT }),
   'limit-open': Object.freeze({ bufferMs: 0, retrySpacingMs: 30 * MIN, rearmMs: 10 * MIN,
     maxSends: 6, deadlineMs: 24 * 60 * MIN, resumeText: RESUME_TEXT }),
+  credits: Object.freeze({ bufferMs: 0, initialDelayMs: 6 * 60 * MIN, retrySpacingMs: 6 * 60 * MIN,
+    rearmMs: 10 * MIN, maxSends: 28, deadlineMs: 7 * 24 * 60 * MIN, resumeText: RESUME_TEXT }),
 });
 const KINDS = Object.keys(SCHEDULE);
 
@@ -46,7 +48,7 @@ const KINDS = Object.keys(SCHEDULE);
 // all DERIVED from this table. Scope is claude + codex ONLY this phase; later
 // phases add providers as new entries, never as new branches.
 //   agentIdentity   — terminal.agentIdentity values that resolve to this provider.
-//   kinds           — which detections apply (limit / outage / limitOpen).
+//   kinds           — which detections apply (limit / outage / limitOpen / credits).
 //   limit.rule      — 'generic' (LIMIT_RE/REACHED_RE/RESET_RE) or 'codex' (the
 //                     bespoke multi-line CODEX_* parser); kept deliberately distinct.
 //   outage[]        — outage payloads plus their provider-owned TUI envelopes;
@@ -77,7 +79,7 @@ export function defineProviders(entries) {
       invalid('agentIdentity', 'must be an array of strings');
     }
     if (!entry.kinds || typeof entry.kinds !== 'object') invalid('kinds', 'is required');
-    for (const kind of ['limit', 'outage', 'limitOpen']) {
+    for (const kind of ['limit', 'outage', 'limitOpen', 'credits']) {
       if (typeof entry.kinds[kind] !== 'boolean') invalid(`kinds.${kind}`, 'must be a boolean');
     }
     if (!['generic', 'codex'].includes(entry.limit?.rule)) invalid('limit.rule', 'must be "generic" or "codex"');
@@ -164,7 +166,7 @@ export const PROVIDERS = defineProviders([
   {
     id: 'claude',
     agentIdentity: ['claude', 'claude-agent-teams'],
-    kinds: { limit: true, outage: true, limitOpen: false },
+    kinds: { limit: true, outage: true, limitOpen: false, credits: true },
     limit: { rule: 'generic' },
     outage: [
       // The semantic allowlist sees payload only. Exact Claude history markers
@@ -190,7 +192,7 @@ export const PROVIDERS = defineProviders([
   {
     id: 'codex',
     agentIdentity: ['codex'],
-    kinds: { limit: true, outage: true, limitOpen: true },
+    kinds: { limit: true, outage: true, limitOpen: true, credits: false },
     limit: { rule: 'codex' },
     outage: [
       // Source-verified Codex error payloads stay distinct from the required
@@ -206,7 +208,7 @@ export const PROVIDERS = defineProviders([
   {
     id: 'gemini',
     agentIdentity: ['gemini'],
-    kinds: { limit: true, outage: false, limitOpen: false },
+    kinds: { limit: true, outage: false, limitOpen: false, credits: false },
     limit: { rule: 'generic' },
     outage: [],
     fingerprint: [],
@@ -252,6 +254,7 @@ const LIMIT_RE = /((usage|rate|session|weekly|daily|\d{1,4}[- ]hour)\s+limit|quo
 const REACHED_RE = /(reached|hit|exceeded)/i;
 const RESET_RE = /(resets?\b|try again|\bavailable|come back)/i;
 const VETO_RE = /approaching[^\n]*limit/i;
+const CREDITS_RE = /^[⎿⏺]\s*You['’]re out of usage credits\.(?:\s|$)/;
 
 // Claude Code's persistent status footer ("Context … │ Usage … (resets in 3h 8m)")
 // is on screen in every Claude terminal and always satisfies RESET_RE. It is
@@ -485,6 +488,12 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   // neither be mistaken for a reached-banner nor veto a genuine reached-banner
   // that happens to share the same 18-line window (per-line veto, not whole-window).
   const beforeInputBox = (_line, index) => platformFooterStart < 0 || index < platformFooterStart - 2;
+  const outputStart = platform === 'unknown' ? PROVIDERS.flatMap((p) => p.chrome.outputStart)
+    : providerFor(platform)?.chrome.outputStart ?? [];
+  const isOutputStart = (x) => outputStart.some((re) => re.test(x));
+  const staleAfter = (r) => window.some((x, i) => i > r && beforeInputBox(x, i)
+    && (isOutputStart(x) || OUTAGE_PATTERNS.some((pattern) => testPattern(pattern.re, x))
+      || RETRY_RE.test(x)));
   const kept = window.filter((l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l));
   const text = kept.join('\n');
   let limit = null;
@@ -503,15 +512,10 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     };
     const l = lastIndex(window, isRelevant);
     const r = lastIndex(window, (x, i) => isCoreEvidence(x, i) && reachedLine(x));
-    const outputStart = platform === 'unknown' ? PROVIDERS.flatMap((p) => p.chrome.outputStart)
-      : providerFor(platform)?.chrome.outputStart ?? [];
-    const isOutputStart = (x) => outputStart.some((re) => re.test(x));
     // A new message, API outage, or retry after the reached line stales the limit.
     // Key on the reached line: later prose with reset words can become the last
     // relevant line without making the old banner current.
-    const stale = window.some((x, i) => i > r && beforeInputBox(x, i)
-      && (isOutputStart(x) || OUTAGE_PATTERNS.some((pattern) => testPattern(pattern.re, x))
-        || RETRY_RE.test(x)));
+    const stale = staleAfter(r);
     // Same final-block guard the Codex limit and outage rules use: a banner the
     // agent already scrolled past (ordinary output between it and an idle empty
     // box) is stale and must not re-fire a resume send (DOG-24).
@@ -543,7 +547,16 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   // --- outage rule ---
   const outage = scanOutage(sourceWindow, window, platform, platformFooterStart).banner;
 
-  const pick = (limit && outage) ? (limit.reachedIndex >= outage.index ? limit : outage) : (limit ?? outage);
+  let pick = (limit && outage) ? (limit.reachedIndex >= outage.index ? limit : outage) : (limit ?? outage);
+  if (platformSupports(platform, 'credits')) {
+    const r = lastIndex(window, (line, i) => beforeInputBox(line, i) && CREDITS_RE.test(line));
+    if (r >= 0 && !staleAfter(r) && window.slice(r + 1).every((_line, offset) =>
+      isTrailingChromeAt(platform, window, r + 1 + offset, platformFooterStart))
+      && (!pick || r >= (pick.reachedIndex ?? pick.index))) {
+      pick = { kind: 'credits', resetAt: null, bannerText: sanitize(window[r], 600),
+        matchedLine: window[r], patternId: 'credits', index: r };
+    }
+  }
   if (!pick) return null;
   const { index, reachedIndex, ...banner } = pick;
   return banner;
@@ -569,8 +582,8 @@ export function inferPlatform(terminal, banner = null, window = null) {
 
 export function newEvent(o, now, newEpisodeId = randomUUID) {
   const kind = o.banner.kind;
-  const resetAt = kind === 'outage'
-    ? new Date(now.getTime() + SCHEDULE.outage.initialDelayMs)
+  const resetAt = SCHEDULE[kind]?.initialDelayMs !== undefined
+    ? new Date(now.getTime() + SCHEDULE[kind].initialDelayMs)
     : kind === 'limit-open' ? now
     : o.banner.resetAt ? new Date(o.banner.resetAt)
     : (parseResetTime(o.banner.bannerText, now) ?? new Date(now.getTime() + 60 * MIN));
@@ -591,6 +604,7 @@ export function validateEvent(key, ev) {
   if (!KINDS.includes(ev.kind)) return `kind: ${ev.kind}`;
   if (!PLATFORMS.includes(ev.platform)) return `platform: ${ev.platform}`;
   if (ev.kind === 'outage' && !platformSupports(ev.platform, 'outage')) return 'platform: outage requires a known platform';
+  if (ev.kind === 'credits' && !platformSupports(ev.platform, 'credits')) return 'platform: credits requires claude';
   if (!STATUSES.includes(ev.status)) return `status: ${ev.status}`;
   if (['awaiting-user', 'dismissed'].includes(ev.status) && ev.kind !== 'limit-open') return 'status: requires limit-open';
   if (ev.kind === 'limit-open') {
