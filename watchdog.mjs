@@ -297,8 +297,9 @@ export const OUTAGE_PATTERNS = PROVIDERS.flatMap((p) =>
   p.outage.map((o) => ({ id: o.id, re: o.re, envelope: o.envelope,
     platforms: o.alsoUnknown ? [p.id, 'unknown'] : [p.id] })));
 const RETRY_RE = /retrying in \d|attempt \d+\s*(\/|of)\s*\d+|Reconnecting\.\.\. (\d+\/\d+|waiting for network)|esc to interrupt/i;
-// Lines allowed AFTER the error for it to count as the final, stalled banner.
+// Idle Codex composer chrome, also the draft guard's history boundary.
 const CODEX_IDLE_COMPOSER_RE = /^›(\s+Ask Codex to do anything)?\s*$/;
+// Lines allowed AFTER the error for it to count as the final, stalled banner.
 const CHROME_RES = [
   /^$/,
   /^[─│╭╮╰╯┃━┌┐└┘├┤⎿\s]+$/,
@@ -893,7 +894,7 @@ export function isInputOccupied(tail, platform = 'unknown', draft) {
   // .trim() (both ends) mirrors detection, so an indented draft ("  > text") is
   // not missed. Strictly safer: it can only add skips, never a send (DOG-24).
   const lines = tail.map((l) => stripAnsi(l).trim());
-  const idleComposer = lines.findLastIndex((l) => CODEX_IDLE_COMPOSER_RE.test(l));
+  const idleComposer = tail.findLastIndex((l) => CODEX_IDLE_COMPOSER_RE.test(stripAnsi(l).trimEnd()));
   if (lines.some((l, i) => i > idleComposer && INPUT_DRAFT_RE.test(l))) return true;
   if (platform === 'claude' && lines.some((l, i) => /^❯\s+\S/.test(l)
     && /^─+$/.test(lines[i - 1] ?? '') && /^─+$/.test(lines[i + 1] ?? ''))) return true;

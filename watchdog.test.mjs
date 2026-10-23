@@ -3147,6 +3147,8 @@ for (const [name, draftRows] of [
   ['Python continuation', ['› why does this fail?', '  >>> import foo', '  ModuleNotFoundError: No module named foo']],
   ['unspaced quote continuation', ['› reword this:', '  >the old text']],
   ['bare quote continuation', ['› reword this:', '  > first', '  >']],
+  ['indented idle placeholder (screen E)', ['› why is this idle?', '  • ok', '  › Ask Codex to do anything']],
+  ['indented bare composer (screen F)', ['› reword this:', '  ›', '  the old text']],
 ]) {
   test(`DOG-69: older-host Codex keeps a draft occupied with ${name}`, () => {
     const tail = [
