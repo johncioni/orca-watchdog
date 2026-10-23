@@ -2,6 +2,22 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-10-23: Codex limit wording drift fails silently
+
+A `■` line that `codexCandidate` picks but no `CODEX_LIMIT_FORMS` entry matches creates no
+event: the generic rule is skipped once a Codex candidate exists. Codex 0.155.1 wrote `You’ve`
+(U+2019), and its three 2026-09-21 limit texts replay as `null` on a Codex terminal before 1.2.14.
+After a Codex update, check its wording against `usage_limit_exceeded` in its session logs.
+PR: https://github.com/johncioni/orca-watchdog/pull/94, https://linear.app/johncioni/issue/DOG-67
+
+## 2026-10-23: The LaunchAgent keeps launchd's default process type
+
+`ProcessType Background` throttled the daemon until concurrent `orca terminal read` calls hit the
+15 s exec timeout: from 2026-09-24 to 2026-10-23, 1,034 reads failed, 700 of them logged as
+timeouts (1.2.12 began naming the cause). Leave the key out, and measure read latency under load
+before adding any launchd throttling key.
+PR: https://github.com/johncioni/orca-watchdog/pull/91
+
 ## 2026-09-23: An accepted later reset re-baselines the event's text and anchor
 
 When a moved-later reset is honoured with different text, the event stores
