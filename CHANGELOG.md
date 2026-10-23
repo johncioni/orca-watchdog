@@ -2,6 +2,16 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.13 - 2026-10-23
+
+### Fixed
+
+- Run the LaunchAgent at launchd's default process type instead of `Background`, whose throttling made concurrent Orca terminal reads hit the 15 s timeout. `orca-watchdog start` rewrites the plist. (DOG-65)
+
+### Changed
+
+- Log a `terminal list` timeout at warn, so a tick it skips shows in the activity log. (DOG-65)
+
 ## 1.2.12 - 2026-10-07
 
 ### Changed
