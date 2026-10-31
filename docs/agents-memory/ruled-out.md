@@ -2,6 +2,13 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-10-31: Narrowing Codex's model-limit name so it cannot supply a reset
+
+Restricting the name's characters (DOG-74) would make an unexpected server name match no form,
+the silent miss the Codex entry in decisions.md warns about. Reading the reset only from the last
+`try again` clause fixed the wrong-reset bug without rejecting any name.
+PR: https://github.com/johncioni/orca-watchdog/pull/107
+
 ## 2026-10-23: Reading drafts from `tail` alone, or from the last prompt-glyph line
 
 Orca 1.4.237 moves typed composer text into the read's `draft` field and leaves a bare `❯`/`›`
