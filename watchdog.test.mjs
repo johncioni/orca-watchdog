@@ -733,6 +733,40 @@ test('detects Codex usage limit with a curly apostrophe (DOG-68)', () => {
   assert.equal(b.resetAt, new Date('2026-09-21T14:54:00').toISOString());
 });
 
+for (const [plan, message, suffixes] of [
+  ['A: Pro', 'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits', ['at Nov 1st, 2026 2:54 PM.', 'later.']],
+  ['B: Free', 'You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus),', ['at 2:54 PM.', 'later.']],
+  ['C: Team', 'You’ve hit your usage limit. To get more access now, send a request to your admin', ['at 2:54 PM.', 'later.']],
+  ['D: model', 'You’ve hit your usage limit for gpt-6.1-sol. Switch to another model now,', ['at 2:54 PM.', 'later.']],
+  ['E: Plus', 'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits', ['later.']],
+  ['F: bare', "You've hit your usage limit.", ['later.']],
+]) {
+  for (const suffix of suffixes) {
+    test(`Codex 0.166.0 usage limit ${plan}, ${suffix} (DOG-73)`, () => {
+      const line = `■ ${message}${plan.startsWith('F:') ? ' Try' : ' or try'} again ${suffix}`;
+      const b = detectBanner([line, '›'], 'codex', new Date('2026-10-30T13:33:00'));
+      const timed = suffix.startsWith('at ');
+      assert.equal(b?.kind, timed ? 'limit' : 'limit-open');
+      assert.equal(b.resetAt, timed
+        ? new Date(plan.startsWith('A:') ? '2026-11-01T14:54:00' : '2026-10-30T14:54:00').toISOString()
+        : null);
+    });
+  }
+}
+
+test('Codex 0.166.0 wrapped Free usage limit retains its reset (DOG-73)', () => {
+  const lines = ['■ You’ve hit your usage limit. Upgrade to Plus to continue using Codex',
+    '(https://chatgpt.com/explore/plus), or try again at 2:54 PM.', '›'];
+  const b = detectBanner(lines, 'codex', new Date('2026-10-30T13:33:00'));
+  assert.equal(b?.kind, 'limit');
+  assert.equal(b.resetAt, new Date('2026-10-30T14:54:00').toISOString());
+});
+
+test('Codex model usage limit rejects an extra sentence after the reset (DOG-73)', () => {
+  const line = '■ You’ve hit your usage limit for gpt-6.1-sol. Switch to another model now, or try again at 2:54 PM. Run /model to switch.';
+  assert.equal(detectBanner([line, '›'], 'codex', new Date('2026-10-30T13:33:00')), null);
+});
+
 test('Reconnecting and esc-to-interrupt after the error veto the outage (still working)', () => {
   assert.equal(detectBanner([CODEX_ERR, 'Reconnecting... 3/5 (13s • esc to interrupt)', '  └ Stream disconnected before completion: websocket closed'], 'codex'), null);
   assert.equal(detectBanner([CODEX_ERR, 'Working (12s • esc to interrupt)'], 'codex'), null);
