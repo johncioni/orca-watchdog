@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.18 - 2026-10-31
+
+### Fixed
+
+- Detect Codex 0.166.0's usage-limit messages for Pro, Free/Go and Team/Business plans, and for a limit on one specific model; until now none of them created an event, so those sessions were never resumed. Every Codex usage-limit message that ends in "try again later" is now detected too, and raises the reset-less alert. (DOG-73)
+
 ## 1.2.17 - 2026-10-23
 
 ### Added
