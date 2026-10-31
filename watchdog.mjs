@@ -448,13 +448,13 @@ export function classifyOutageNearMiss(lines, platform = 'unknown') {
   return result.banner === null ? result.blocker : null;
 }
 
-// Named Codex limit forms, bounded to three physical lines below. Only the
-// time clause admits clock/date text; another sentence cannot join the block.
+// Named Codex limit forms, bounded to three physical lines below. Form D's
+// model name is free text; resets are read only from the final retry clause.
 const CODEX_429_RE = /^■\s*exceeded retry limit, last status: 429\b/;
 const CODEX_TIME = String.raw`(?:[A-Za-z]+ \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})? )?(?:\d{1,2}(?::\d{2})?(?: ?[ap]\.?m\.?)?)`;
 const CODEX_TRY = `try again at ${CODEX_TIME}\\.?`;
 const CODEX_LIMIT_FORMS = [
-  new RegExp(`^■\\s*exceeded retry limit, last status: 429(?: Too Many Requests)?(?:[.]? ${CODEX_TRY})?$`, 'i'),
+  new RegExp(`^■\\s*exceeded retry limit, last status: 429(?: Too Many Requests)?(?:, request id: \\S+)?(?:[.]? ${CODEX_TRY})?$`, 'i'),
   new RegExp(`^■\\s*You['’]ve hit your usage limit\\.(?: Upgrade to Pro \\(https?://\\S+\\), visit https?://\\S+ to purchase more credits(?: or (?:${CODEX_TRY}|try again later\\.))?\\.?| (?:${CODEX_TRY}|try again later\\.))?$`, 'i'),
   new RegExp(`^■\\s*You['’]ve hit your usage limit\\. Visit https://chatgpt\\.com/settings/usage to purchase more credits or (?:${CODEX_TRY}|try again later\\.)$`, 'i'),
   new RegExp(`^■\\s*You['’]ve hit your usage limit\\. Upgrade to Plus to continue using Codex \\(https://chatgpt\\.com/explore/plus\\), or (?:${CODEX_TRY}|try again later\\.)$`, 'i'),
@@ -480,7 +480,8 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
       const block = window.slice(c, end + 1).join(' ');
       if (!CODEX_LIMIT_FORMS.some((re) => re.test(block))) continue;
       if (!window.slice(end + 1).every(isChrome)) continue;
-      const resetAt = parseResetTime(block, now)?.toISOString() ?? null;
+      const retryIndex = block.toLowerCase().lastIndexOf('try again');
+      const resetAt = retryIndex < 0 ? null : parseResetTime(block.slice(retryIndex), now)?.toISOString() ?? null;
       const kind = resetAt ? 'limit' : 'limit-open';
       codexLimit = { kind, resetAt, bannerText: sanitize(block, 600), matchedLine: window[c],
         patternId: kind, index: resetAt ? end : c, reachedIndex: c };
