@@ -733,6 +733,20 @@ test('Codex 429 retry-limit with a request id is an open limit (DOG-74)', () => 
   assert.equal(b.resetAt, null);
 });
 
+test('Codex 429 request id cannot supply a reset clock (DOG-75)', () => {
+  const line = '■ exceeded retry limit, last status: 429 Too Many Requests, request id: req-3pm';
+  const b = detectBanner([line, '›'], 'codex');
+  assert.equal(b?.kind, 'limit-open');
+  assert.equal(b.resetAt, null);
+});
+
+test('Codex Unicode model name preserves the retry clause reset date (DOG-75)', () => {
+  const line = '■ You’ve hit your usage limit for İİİİİİİİİİİİİİİ. Switch to another model now, or try again at Mar 5th, 2027 2:54 PM.';
+  const b = detectBanner([line, '›'], 'codex', new Date('2026-10-30T13:33:00'));
+  assert.equal(b?.kind, 'limit');
+  assert.equal(b.resetAt, new Date('2027-03-05T14:54:00').toISOString());
+});
+
 test('Codex model name cannot supply a reset clock (DOG-74)', () => {
   const line = '■ You’ve hit your usage limit for model reset at 3pm. Switch to another model now, or try again later.';
   const b = detectBanner([line, '›'], 'codex', new Date('2026-10-30T13:33:00'));

@@ -480,7 +480,7 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
       const block = window.slice(c, end + 1).join(' ');
       if (!CODEX_LIMIT_FORMS.some((re) => re.test(block))) continue;
       if (!window.slice(end + 1).every(isChrome)) continue;
-      const retryIndex = block.toLowerCase().lastIndexOf('try again');
+      const retryIndex = [...block.matchAll(/try again/gi)].at(-1)?.index ?? -1;
       const resetAt = retryIndex < 0 ? null : parseResetTime(block.slice(retryIndex), now)?.toISOString() ?? null;
       const kind = resetAt ? 'limit' : 'limit-open';
       codexLimit = { kind, resetAt, bannerText: sanitize(block, 600), matchedLine: window[c],
