@@ -2,6 +2,13 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.19 - 2026-10-31
+
+### Fixed
+
+- Detect Codex's `exceeded retry limit, last status: 429` line when it ends with `, request id: …`; until now it created no event, so the session was never resumed. (DOG-74)
+- Read a Codex reset time only from the message's "try again …" part, so a model name in Codex's per-model limit message can no longer supply a wrong reset time. (DOG-74, DOG-75)
+
 ## 1.2.18 - 2026-10-31
 
 ### Fixed
