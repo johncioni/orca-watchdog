@@ -726,6 +726,27 @@ test('Codex 429 retry-limit and usage-limit lines are not outages', () => {
   assert.ok(b); assert.equal(b.kind, 'limit');
 });
 
+test('Codex 429 retry-limit with a request id is an open limit (DOG-74)', () => {
+  const line = '■ exceeded retry limit, last status: 429 Too Many Requests, request id: req-123';
+  const b = detectBanner([line, '›'], 'codex');
+  assert.equal(b?.kind, 'limit-open');
+  assert.equal(b.resetAt, null);
+});
+
+test('Codex model name cannot supply a reset clock (DOG-74)', () => {
+  const line = '■ You’ve hit your usage limit for model reset at 3pm. Switch to another model now, or try again later.';
+  const b = detectBanner([line, '›'], 'codex', new Date('2026-10-30T13:33:00'));
+  assert.equal(b?.kind, 'limit-open');
+  assert.equal(b.resetAt, null);
+});
+
+test('Codex model name cannot supply a reset date (DOG-74)', () => {
+  const line = '■ You’ve hit your usage limit for Mar 5 model. Switch to another model now, or try again at 2:54 PM.';
+  const b = detectBanner([line, '›'], 'codex', new Date('2026-10-30T13:33:00'));
+  assert.equal(b?.kind, 'limit');
+  assert.equal(b.resetAt, new Date('2026-10-30T14:54:00').toISOString());
+});
+
 test('detects Codex usage limit with a curly apostrophe (DOG-68)', () => {
   const line = '■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 2:54 PM.';
   const b = detectBanner([line, '›'], 'codex', new Date('2026-09-21T13:33:00'));
