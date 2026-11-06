@@ -90,9 +90,11 @@ config `~/.agents/MODELS.md` "One round" names (at any depth),
 `docs/agents-memory/*` (imported into every session).
 
 **Branch protection is strict:** `main` requires the PR branch to be up to
-date. On `mergeStateStatus: BEHIND`, run `gh pr update-branch <n>`, wait for
-the checks to go green again, then merge; if more commits are needed after
-the update, `git pull` in the worktree first — never `--admin`, never a
+date. `~/.agents/merge-reviewed-pr.sh` updates a `BEHIND` branch and waits for
+the checks at merge time. A branch that still needs commits takes main through
+`start-worker-merge`, not `gh pr update-branch` (`~/.agents/RUNBOOK.md`, "Merge
+conflicts"), since a worker's worktree takes no bare git
+(`~/.agents/ORCHESTRATION.md`, "Dispatch rules"). Never `--admin`, never a
 force-push.
 
 ## Orca (the ADE this project lives in)
