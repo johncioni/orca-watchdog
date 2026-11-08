@@ -68,7 +68,8 @@ launcher shims; `/usr/bin/lockf` for `flock`; Homebrew formula.
 | `RELAUNCH_WINDOW_MS` | 120 000 | wrapper consumes a request only if Claude exits within this of `sentAt` |
 | `SESSION_POLL_MS` | 5 000 | wrapper re-reads its child's pid file this often |
 | `SETTLE_MS` | 60 000 | a successor alive this long, with pid-file evidence, is settled |
-| `CONSUMED_BOUND_MS` | 15 × 60 000 | consumed request with no successor (admission wait) → failed |
+| `CONSUMED_BOUND_MS` | 15 × 60 000 | consumed request with no successor → failed (controller side) |
+| `ADMISSION_GIVE_UP_MS` | 12 × 60 000 | wrapper stops waiting for admission and launches on Max, before the controller's bound |
 | `CONFIRM_BOUND_MS` | 10 × 60 000 | successor without pid-file evidence of the session → failed |
 | `MAX_SWITCH_ATTEMPTS` | 3 | `/exit` sends per request before cancelling |
 | `ADMISSION_SPACING_MS` | 60 000 | one Console resume per minute: a ≤1M-token uncached resume stays under 2,000,000 ITPM |
@@ -84,18 +85,41 @@ One file per handle, `requests/<handle>.json`, every change under
 
 | State | Written by | Fields set |
 |---|---|---|
-| `pending` | controller, at commit | `handle, wrapperPid, generation (G), sessionId, to, attempts, sentAt, createdAt` |
+| `pending` | controller, at commit | `handle, wrapperPid, generation (G), sessionId, to, attempts, sentAt, createdAt, eventSnapshot` |
 | `pending` (retry) | controller | `attempts + 1`, new `sentAt` |
 | `consumed` | wrapper, when Claude G exits | `consumedAt`, `successorGeneration: G+1` |
 | deleted | controller only | on confirm, fail, cancel or supersede |
 
-The wrapper consumes only a `pending` request whose `wrapperPid` and
-`generation` are its own, whose `sessionId` equals the session it last
-observed for child G (pid-file poll, falling back to the launch ID when no
-poll succeeded), and whose `sentAt` is within `RELAUNCH_WINDOW_MS` of the
-exit. Otherwise it leaves the record untouched and exits with Claude's
-status (its death cancels the request on the next tick). The wrapper never
-deletes a request.
+`eventSnapshot` is a copy of the handle's stored events at commit (reset,
+anchor, banner text, attempts, episode), so the ordinary path's history
+survives whatever `reconcile` does to the live event while the request
+owns the handle.
+
+**Session agreement.** The controller commits a request only when the
+registration's `sessionId` (the wrapper's last observation) equals the
+`sessionId` it has just read from Claude's pid file; when they differ it
+holds this tick (the wrapper catches up within `SESSION_POLL_MS`). The
+wrapper consumes only a `pending` request whose `wrapperPid` and
+`generation` are its own, whose `sentAt` is within `RELAUNCH_WINDOW_MS` of
+the exit, and whose `sessionId` equals its latest known session for child
+G: the last poll, updated by one final read of the pid file at child exit
+when it still exists. On a session mismatch (the session changed after
+the commit) it prints both IDs, appends one line to the watchdog activity
+log and exits non-zero: no relaunch of either session. In every
+non-consuming case it leaves the record untouched; its death cancels the
+request on the next tick. The wrapper never deletes a request.
+
+**Successor launch is atomic with the record.** The wrapper registers
+generation G+1 (with its mode) while holding `requests/<handle>.lock`,
+after re-reading the record under that lock, and spawns only once it has
+registered. If the record is gone or is no longer its `consumed` record,
+it launches on Max instead. The controller evaluates every request
+transition under the same lock, so it sees either no successor (and may
+fail the request, which stops a Console launch) or a registered G+1.
+While waiting for admission the wrapper re-checks the record, `launchMode`
+and `takeAdmission` every `ADMISSION_POLL_MS`, and after
+`ADMISSION_GIVE_UP_MS` launches on Max, which the controller then sees as
+a superseded request.
 
 Controller transitions for a request naming W, G, S (Task 4; every branch
 ends within a stated bound, and none sends `/exit` to a successor):
@@ -103,7 +127,8 @@ ends within a stated bound, and none sends `/exit` to a successor):
 | Observed | Outcome |
 |---|---|
 | `pending`, G registered, `sentAt` older than `RELAUNCH_WINDOW_MS` | resend `/exit` (all guards) while `attempts < MAX_SWITCH_ATTEMPTS`, else **cancel** |
-| `pending`, G registered, deadline passed (Console) or credit marked exhausted | **cancel** |
+| `pending`, `to: console`, G registered, deadline passed or credit marked exhausted | **cancel** |
+| `pending`, `to: max`, G registered, credit marked exhausted | no effect: retries continue as above |
 | `consumed`, no G+1 yet, W alive, `consumedAt` within `CONSUMED_BOUND_MS` | hold (admission wait) |
 | `consumed`, no G+1 after `CONSUMED_BOUND_MS` | **fail** |
 | G+1 registered by W, mode = `to`, younger than `SETTLE_MS` | hold: no `/exit`, no ordinary send, no cancel |
@@ -116,9 +141,11 @@ ends within a stated bound, and none sends `/exit` to a successor):
 Confirm: delete the request, log `switched <handle> to <to>`, delete the
 handle's events detected before the successor's `launchedAt` (removal
 reason `switched`). Fail and cancel: delete the request, set
-`mode.lastError`, log at `error`, add `<handle>:<W>` to `mode.noSwitch`;
-the handle's events (kept throughout) return to the ordinary path with
-their original reset anchors. Supersede: delete the request, no
+`mode.lastError`, log at `error`, add `<handle>:<W>` to `mode.noSwitch`,
+and restore `eventSnapshot` into the stored events in place of whatever
+`reconcile` left for that handle (deleted, replaced or changed), so the
+ordinary path continues from the original reset, anchor and attempts.
+Supersede: delete the request and restore the snapshot the same way, no
 `noSwitch`.
 
 ## Review Focus
@@ -279,6 +306,12 @@ write a request through the real `updateRequest`, and exits with
   dir, `CLAUDE_CODE_TMPDIR` unchanged, generation 2, the request is
   `consumed` with `successorGeneration: 2` and still on disk.
 - `relaunch resumes the pid file's current session` (Review Focus 1).
+- `session identity at exit` (injected clock, the fake removes its pid
+  file on exit): (a) registration acked `s2` by a poll, request names
+  `s2`, no pid file at exit → consumed, argv has `--resume s2`; (b) request
+  names `s1`, the fake switched to `s2` after the last poll and the final
+  exit read sees `s2` → not consumed, both IDs printed, one log line,
+  non-zero exit, no launch; (c) request names `s3` → never consumed.
 - `max request relaunches with inherited env` (unset stays unset),
   message `MAX_MESSAGE`.
 - `request outside the relaunch window is not consumed`, `request for
@@ -288,6 +321,14 @@ write a request through the real `updateRequest`, and exits with
   whose admission is taken; while waiting, `until` passes (injected clock)
   → launches on Max at once; likewise when credit is marked exhausted
   during the wait.
+- `admission wait stops when the record is revoked`: a waiting wrapper
+  whose consumed record is deleted (controller fail, with a controller
+  restart in between) launches on Max at its next poll, and a slot freed
+  afterwards produces no Console child; `admission wait gives up at
+  ADMISSION_GIVE_UP_MS` and launches on Max.
+- `successor registers under the request lock`: with the request lock
+  held by the test, the wrapper neither registers G+1 nor spawns until it
+  is released.
 - `failed console relaunch falls back to max once`: generation 2 exits 1
   before `SETTLE_MS` → generation 3 on Max with the same session; a second
   failure → wrapper exits non-zero, prints the session ID, appends one line
@@ -306,12 +347,15 @@ write a request through the real `updateRequest`, and exits with
   - `bin/claude-overflow.mjs`: pass-through cases spawn once and exit with
     Claude's status. Owned loop: `claimHandle` (false → pass-through); set
     `CLAUDE_OVERFLOW_OWNER=<handle>:<pid>` for the child; each launch picks
-    `launchMode` (ineligible → max); a Console `--resume` launch loops on
-    `ADMISSION_POLL_MS`, re-checking `launchMode` and `takeAdmission`;
-    spawn with `stdio: 'inherit'`; update the registration (generation +1,
-    `claudePid`, `launchedAt`, `configDir`, `mode`); poll the child's pid
-    file every `SESSION_POLL_MS` and record its `sessionId` in the
-    registration when it changes. On exit, consume per "Request record".
+    `launchMode` (ineligible → max); a relaunch for a consumed request
+    follows "Successor launch is atomic with the record" (admission loop,
+    revocation, give-up, G+1 registered under the request lock before
+    spawn); spawn with `stdio: 'inherit'`; record `claudePid` in the
+    registration once spawned; poll the child's pid file every
+    `SESSION_POLL_MS` and record its `sessionId` in the registration when
+    it changes. On exit, take one final pid-file read, then consume per
+    "Request record". The initial message follows the mode actually
+    launched (`CONSOLE_MESSAGE` or `MAX_MESSAGE`).
     Ignore SIGINT/SIGQUIT; forward SIGTERM/SIGHUP and stop. Release the
     handle in `finally` and on `exit`.
   - Formula: `(bin/"claude-overflow").write_env_script libexec/"bin/claude-overflow", ORCA_WATCHDOG_NODE: formula_opt_bin("node")/"node"`.
@@ -343,13 +387,18 @@ After Task 2 merges; before Task 4. Code review: Opus xhigh.
 - Consumes: `overflowPaths`, `withFlock`, `readMode`, `updateMode`,
   `isEnabled`, `readRegistrations`, `readRequest` (Task 2).
 - Produces: `setupConsoleDir({ home }) -> { linked, seeded, skipped }`;
-  `syncConsoleProject(cwd, { home }) -> boolean`.
+  `syncConsoleProject(cwd, { home }) -> { ok: boolean, wrote: boolean, reason?: 'unseeded'|'lock-timeout'|'error' }`.
+  `ok: false` means the Console dir is not ready for `cwd`: the wrapper
+  must launch that session on Max (with `MAX_MESSAGE` for a relaunch) and
+  append one activity-log line naming the cwd and reason. `ok: true,
+  wrote: false` is a ready cwd that needed no write.
 - Sync strategy, chosen from spike item 13 before dispatch:
   - **Parent trust works:** `setupConsoleDir` seeds trust and onboarding
     for the roots Orca uses (`~/orca/workspaces`, `~/orca/projects`,
     `~/Projects`, and each `orca repo list` path), and
-    `syncConsoleProject` becomes a check that returns false and logs when
-    `cwd` is not under a seeded root; no per-launch write.
+    `syncConsoleProject` checks that `cwd` is under a seeded root and
+    returns `{ ok: false, reason: 'unseeded' }` when it is not; no
+    per-launch write. `overflow setup` reruns to seed a new root.
   - **It does not:** `syncConsoleProject` copies only the named keys for
     `cwd` under `withFlock(<consoleDir>/.claude.json.lock)`, re-reading
     inside the lock. If spike item 13 showed a running Claude rewrites
@@ -368,7 +417,10 @@ After Task 2 merges; before Task 4. Code review: Opus xhigh.
   intact (locked-sync variant); `overflow enable` before setup exits
   non-zero with `run 'orca-watchdog overflow setup' first`; `clear-credit`
   nulls only `creditExhaustedUntil`; the wrapper calls
-  `syncConsoleProject(cwd)` before each Console launch.
+  `syncConsoleProject(cwd)` before each Console launch, and `unseeded cwd
+  launches on Max` (a cwd outside every seeded root during an active
+  window: the fake Claude is launched without `CLAUDE_CONFIG_DIR`, one log
+  line names the cwd; same for a lock timeout).
 - [ ] **Step 2: Run, expect FAIL**: `node --test console-config.test.mjs management.test.mjs claude-overflow.test.mjs`
 - [ ] **Step 3: Implement** per the interfaces and the chosen strategy.
 - [ ] **Step 4: Gate**: `bash scripts/orca-setup.sh` → all pass.
@@ -402,7 +454,12 @@ path; selection rule 1). After Task 3 merges. Code review: Opus xhigh.
   exists).
 - `lib/overflow.mjs` imports nothing from `watchdog.mjs`. It exports
   `planOverflow(input) -> Plan`, pure:
-  - `input = { enabled, mode, registrations, requests, sessions, facts, events, listedHandles, now }`;
+  - `input = { enabled, mode, registrations, requests, sessions, facts, observations, events, listedHandles, now }`;
+    `observations: Map<handle, { read: boolean, banner: { kind, platform, resetAt, parsedReset: boolean, bannerText } | null, billing: boolean }>`
+    for every listed handle (`read: false` when the read failed or was
+    skipped this tick; `parsedReset` false for `newEvent`'s 60-minute
+    fallback; `billing` true when the spike-item-6 billing text is in the
+    window above the input box, computed only for Console-mode handles);
     `sessions: Map<'<configDir>:<pid>', { sessionId, status } | null>`;
     `facts = { alive: Set<number>, foreground: Set<string> }` (handles
     whose owner's Claude is the foreground program, spike item 10).
@@ -426,16 +483,22 @@ Rules `planOverflow` encodes (each a test in `overflow.test.mjs`):
 - `noSwitch` is checked before any switch in either direction; an entry is
   dropped once no registration file for that `<handle>:<wrapperPid>`
   exists.
-- Trigger: a `limit` event on platform `claude` whose `resetAt` came from
-  the banner (not the 60-minute fallback) on an eligible Max-mode
-  registration, credit not exhausted → `until = max(until, resetAt +
+- Trigger: a handle whose observation this tick is `read: true` with a
+  Claude `limit` banner with `parsedReset`, on an eligible Max-mode
+  registration, credit not exhausted. Its reset evidence: when the
+  normalized banner text equals the stored event's `bannerText`, the
+  stored event's `resetAt` (an unchanged old clock is never reparsed);
+  otherwise the observation's `resetAt`. `until = max(until, evidence +
   bufferMs)`; at most `SWITCHES_TO_CONSOLE_PER_TICK` switches, oldest
-  event first. Ineligible registrations never touch `until`.
+  event first. Ineligible registrations and `read: false` handles never
+  touch `until` or switch. A later limit seen on an already-Console or
+  already-switching eligible handle still extends `until` by the same
+  rule.
 - Switch-back: `switchBackDue(mode, now)` → each Console-mode registration
   whose session `status` is idle (spike item 7) → `to: max`; busy or
   missing status → nothing this tick. A credit mark alone never triggers
   it.
-- Billing text (spike item 6) in a Console handle's window →
+- `observations.get(h).billing` on a Console-mode handle →
   `creditExhaustedUntil` = next 1st of the month 00:00 UTC; no send.
 - `suppress`: `'all'` for handles with a request or switched this tick;
   `'limit-credits'` for `consoleHandles` without a request. The plan never
@@ -446,21 +509,26 @@ Tick phases (in this order; degraded ticks run only phase 1 and the
 ordinary freeze):
 1. Reads, detection captures and `reconcile` exactly as today (no
    observation filtering), with `consoleRows` for handles that were
-   Console-mode at tick start.
-2. `planOverflow`; persist `mode` via `updateMode`.
+   Console-mode at tick start; the adapter also builds `observations`
+   (including `billing`) from the same reads.
+2. `planOverflow`; persist `mode` via `updateMode` (not on `--dry-run`).
 3. Remove suppressed handles' candidates from `sendCandidates` (`'all'`:
    every kind; `'limit-credits'`: limit and credits only). Events stay.
 4. Apply `confirms` (delete request, delete the handle's events detected
    before `successorLaunchedAt`, reason `switched`), `fails`, `cancels`,
-   `supersedes` per the Request record.
+   `supersedes` per the Request record, each under the request lock;
+   fails, cancels and supersedes restore `eventSnapshot`. On `--dry-run`
+   phases 2 and 4 print what they would do and write nothing.
 5. Commit `switches` and `resends`, each through the send loop's guards in
    order: dry-run (prints `would switch <handle> to <to>`, writes
    nothing), kill switch, `terminal wait --for tui-idle`, fresh `readTail`,
    foreground re-check, shell-prompt guard, draft guard
    (`isInputOccupied(tail, 'claude', draft)`), for `to: console` the fresh
-   banner must still be a Claude `limit`. Any guard failing → nothing
-   written this tick. Then `updateRequest` (create `pending`, or
-   `attempts + 1`), send `/exit` + Enter, and capture with
+   banner must still be a Claude `limit`; the pid file's `sessionId` must
+   equal the registration's (Request record, "Session agreement"). Any
+   guard failing → nothing written this tick. Then `updateRequest`
+   (create `pending` with `eventSnapshot`, or `attempts + 1`), send
+   `/exit` + Enter, and capture with
    `reason: 'send'` plus `overflow: { to, attempt }` and the raw read (so
    the newest-50 retention covers it).
 6. The ordinary send loop, unchanged.
@@ -469,6 +537,19 @@ ordinary freeze):
   plus: `uncommitted or cancelled switch keeps the original reset anchor`
   (a draft blocks the commit; then a cancelled request; the ordinary path
   later sends on the event's original `resetAt`, not a re-parsed one);
+  `snapshot restores history after two absent reads` and `after a kind
+  replacement`, each followed by a cancel or fail with a controller
+  restart in between, asserting the restored event's `resetAt`,
+  `resetAnchorAt`, `bannerText` and `attempts`; `billing-only read marks
+  credit` (a Console handle whose only signal is the billing text);
+  `changed later reset extends until` (stored event at 11:00Z, new banner
+  text at 15:00Z → `until` from 15:00Z; the same unchanged text read at
+  14:00Z keeps 11:00Z); `unread handle beside a read one` (no switch and
+  no `until` change for the unread one); `session disagreement holds`
+  (registration `s1`, pid file `s2` → no request, no `/exit`; next tick
+  with registration `s2` commits `s2`); `credit mark does not cancel a
+  max request` (to-max `/exit` fails once with credit marked, the retry
+  next tick succeeds, with a controller restart between);
   `tick between successor and settle keeps the request pending` then
   `confirms on the next tick` with real Task 2 files and a controller
   restart in between (new `tick` call, fresh deps); `credit exhaustion
