@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.20 - 2026-11-08
+
+### Fixed
+
+- Detect Claude Code's usage-limit message when the session is running `/goal`, and when the message ends with the new "/upgrade or /usage-credits to finish what you're working on." line; until now neither created an event, so those sessions were never resumed. (DOG-77)
+
 ## 1.2.19 - 2026-10-31
 
 ### Fixed
