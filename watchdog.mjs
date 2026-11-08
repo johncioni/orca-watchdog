@@ -184,7 +184,9 @@ export const PROVIDERS = defineProviders([
       outputStart: [/^⏺\s/],
       trailing: [
         /^✻ [A-Za-z]+ for \d+(?:h|m|s)(?: \d+(?:h|m|s)){0,2} · done \d{1,2}:\d{2} [AP]M$/,
-        /^new task\? \/clear to save \d+(?:\.\d+)?k tokens$/,
+        /^new task\? \/clear to save \d+(?:\.\d+)?k tokens(?: · ◎ \/goal active \([^)]+\))?$/,
+        /^◎ \/goal active \([^)]+\)$/,
+        /^\/upgrade or \/usage-credits to finish what you[’']re working on\.$/,
       ],
       footerStart: { prompt: /^❯$/, rule: /^─+$/ },
     },

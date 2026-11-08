@@ -408,6 +408,81 @@ const CODEX_FOOTER = 'Context 16% used · 5h 36% left · weekly 90% left · gpt-
 const CODEX_TAIL = ['─ Worked for 2m 51s ───────────', CODEX_ERR, '', '› Ask Codex to do anything', CODEX_FOOTER];
 const outageTail = (line) => ['some earlier output', line, ...CHROME_TAIL];
 
+// DOG-77: verbatim tails from the 2026-11-08 Claude 5-hour limit captures.
+const CLAUDE_GOAL_LIMIT_REVIEW = [
+  '⏺ Ran 5 stop hooks',
+  "  ⎿  Stop hook error: Hook evaluator API error: You've hit your 5-hour limit · resets 12:20am (America/New_York)",
+  '⏺ Goal still active · the goal check could not complete · retrying in 1 min (1/3) · send a message to retry now',
+  '✻ Cogitated for 7m 58s · done 10:54 PM',
+  '⏺ Goal check-in: continuing after the last turn ended early',
+  "  ⎿  You've hit your 5-hour limit · resets 12:20am (America/New_York)",
+  '     /upgrade or /usage-credits to finish what you’re working on.',
+  '⏺ Goal paused · usage limit reached · send a message after it resets to continue',
+  '✻ Cooked for 0s · done 10:55 PM',
+  '                                                                             new task? /clear to save 159.1k tokens · ◎ /goal active (1h)',
+  '─'.repeat(139),
+  '❯',
+  '─'.repeat(139),
+  '  [Opus 5.5 ◕ xhigh] │ phase3-3d-1-hardening',
+  '  Context ██░░░░░░░░ 16% │ Usage 7d 85% │ $3.09 │ 1h 33m',
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
+];
+const CLAUDE_GOAL_LIMIT_FALLBACK = [
+  '⏺ Ran 5 stop hooks',
+  "  ⎿  Stop hook error: Hook evaluator API error: You've hit your 5-hour limit · resets 12:20am (America/New_York)",
+  '⏺ Goal still active · the goal check could not complete · retrying in 1 min (1/3) · send a message to retry now',
+  '✻ Worked for 23m 56s · done 10:55 PM',
+  '⏺ Goal check-in: continuing after the last turn ended early',
+  "  ⎿  You've hit your 5-hour limit · resets 12:20am (America/New_York)",
+  '     Use your limit reset to reset it now: clau.de/reset',
+  '     /upgrade or /usage-credits to finish what you’re working on.',
+  '⏺ Goal paused · usage limit reached · send a message after it resets to continue',
+  '✻ Worked for 0s · done 10:56 PM',
+  '                                                                               new task? /clear to save 171k tokens · ◎ /goal active (1h)',
+  '─'.repeat(139),
+  '❯',
+  '─'.repeat(139),
+  '  [Opus 4.8 ◕ xhigh] │ ops-187-heredoc-guard',
+  '  Context ██░░░░░░░░ 17% │ Usage 7d 85% │ $7.29 │ 1h 48m',
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
+];
+const CLAUDE_LIMIT_WITHOUT_GOAL = CLAUDE_GOAL_LIMIT_REVIEW
+  .filter(row => !row.startsWith('⏺ Goal paused'))
+  .map(row => row.includes('new task?') ? 'new task? /clear to save 159.1k tokens' : row);
+const CLAUDE_LIMIT_WITHOUT_GOAL_RESET = CLAUDE_LIMIT_WITHOUT_GOAL.slice();
+CLAUDE_LIMIT_WITHOUT_GOAL_RESET.splice(
+  CLAUDE_LIMIT_WITHOUT_GOAL_RESET.findIndex(row => row.trim().startsWith('/upgrade')), 0,
+  '     Use your limit reset to reset it now: clau.de/reset');
+
+for (const [name, tail] of [
+  ['review capture', CLAUDE_GOAL_LIMIT_REVIEW],
+  ['fallback capture', CLAUDE_GOAL_LIMIT_FALLBACK],
+  ['without goal', CLAUDE_LIMIT_WITHOUT_GOAL],
+  ['without goal with reset offer', CLAUDE_LIMIT_WITHOUT_GOAL_RESET],
+  ['bare goal row', CLAUDE_GOAL_LIMIT_REVIEW.map(row =>
+    row.includes('new task?') ? '                                                                             ◎ /goal active (2h)' : row)],
+]) {
+  test(`DOG-77: Claude 5-hour limit ${name} keeps its reset instant`, () => {
+    const now = new Date('2026-11-08T03:56:00Z');
+    const banner = detectBanner(tail, 'claude', now);
+    assert.equal(banner?.kind, 'limit');
+    assert.equal(newEvent({ handle: 'term_dog77', platform: 'claude', banner }, now).resetAt,
+      '2026-11-08T05:20:00.000Z');
+  });
+}
+
+test('DOG-77 guard: a new message after the non-goal limit makes it stale', () => {
+  const tail = CLAUDE_LIMIT_WITHOUT_GOAL.slice();
+  tail.splice(tail.findIndex(row => /^─+$/.test(row)), 0, '⏺ Continuing with the next task.');
+  assert.equal(detectBanner(tail, 'claude', new Date('2026-11-08T03:56:00Z')), null);
+});
+
+test('DOG-77 guard: the usage-credits continuation alone is not a limit', () => {
+  const continuation = CLAUDE_GOAL_LIMIT_REVIEW.find(row => row.trim().startsWith('/upgrade'));
+  assert.equal(detectBanner(['⏺ Finished the review.', '  No further changes needed.', continuation],
+    'claude', new Date('2026-11-08T03:56:00Z')), null);
+});
+
 test('DOG-52: existing Claude, Codex, and Gemini limit fixtures keep their reset instants', () => {
   const fixtures = [
     ['Claude classic', CLAUDE_BANNER, 'claude', new Date('2026-09-22T01:55:00Z'), '2026-09-22T07:00:00.000Z'],
