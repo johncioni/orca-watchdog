@@ -2,6 +2,13 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## 1.2.21 - 2026-11-08
+
+### Fixed
+
+- Detect Claude Code limit and outage messages in sessions that show the Flightdeck side panel; the panel's text on every row hid them, so those sessions were never resumed. The panel is recognized by its layout only, and any screen it cannot recognize with confidence is read exactly as before. (DOG-78)
+- Treat a labelled input-box top line (`ultracode`) and Claude Code's "Update installed · Restart to update" notice as part of the footer. (DOG-78)
+
 ## 1.2.20 - 2026-11-08
 
 ### Fixed
