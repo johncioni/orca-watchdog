@@ -12,15 +12,30 @@ is now a symlink to `~/.claude/projects` (the link Task 3's setup makes),
 and `~/.claude-console/.claude.json` now has onboarding complete and three
 project entries for the `~/.cache/dog81-spike/` test dirs.
 
-## Contradicts the spec: the Console org has no usable credit
+## Contradicts the spec: the credit does not cover interactive Claude Code
 
-The first Console turn failed with `Credit balance too low · Add funds:
-https://platform.claude.com/settings/billing`. The login's org is "Team
-Rocket", `billingType: prepaid`. The spec assumes a $100/month promo
-credit there. Until the org has a balance, every switch to Console would
-fail on its first turn and mark credit exhausted. This goes to John before
-Task 2 (plan, Task 1). It also left item 8's 1M-context check and the live
-429 text unestablished.
+The Console org ("Team Rocket", `billingType: prepaid`) has the promo
+credit; John confirmed it on the dashboard. Requests that Claude Code tags
+as SDK use (`claude -p`) are accepted and billed against it: Haiku,
+Sonnet, Opus and Opus 1M all answered, from a clean environment. Every
+request from an interactive session on the same login is refused with
+`400 Your credit balance is too low to access the Anthropic API`, even the
+startup key check (`source=verify_api_key`) and `/model`. Same
+credential, model and prompt; only the client tag differs. One diagnostic
+run of an interactive session with `CLAUDE_CODE_ENTRYPOINT=sdk-cli` was
+accepted, which is how the tag was identified.
+
+So the server applies this credit to SDK use and not to interactive
+Claude Code. The wrapper will not set that variable or otherwise
+misreport the client: that would bill interactive use against a credit
+the provider declines for it. Whether the credit is meant to cover Claude
+Code is a question for John (the promo's terms or Anthropic support),
+and it decides whether the spec's premise holds.
+
+Probe caveat: `claude -p` run from inside an orchestrator session
+inherits `CLAUDE_CODE_CHILD_SESSION` and messaging-socket variables, and
+those runs proved nothing about the Console login. Only the `env -i`
+probes and probes typed into a throwaway tab count.
 
 ## Results by item
 
@@ -108,9 +123,9 @@ the process exits: it was already gone when `kill -0` first failed, in
 both config dirs and on SIGTERM.
 
 **8. Model and permission mode on Console.** `--permission-mode auto`
-works (`⏵⏵ auto mode on`). `--model 'claude-opus-5-5[1m]'` is accepted
-at launch, but no request succeeded, so 1M context is **not
-established**. User-level configuration under `~/.claude` does not apply
+works (`⏵⏵ auto mode on`). `--model 'claude-opus-5-5[1m]'` works on the
+Console login in print mode (clean environment); interactive requests
+fail for the reason above. User-level configuration under `~/.claude` does not apply
 to a Console session: no statusline or HUD, effort fell to `medium`
 instead of John's `high`, "1 skill available", no user hooks or plugins.
 Role restrictions passed as flags (`--settings <file>`, `--tools`,
@@ -118,7 +133,11 @@ Role restrictions passed as flags (`--settings <file>`, `--tools`,
 `--setting-sources user` reads `~/.claude-console/settings.json`. Task 3's
 link table decides which user files a Console session shares. Orca's
 default `--advisor claude-fable-5-1` would run the Fable advisor on API
-credit in a Console session; that is a Task 6 decision.
+credit in a Console session. Without that flag and with no settings, a
+Console session still logged `[AdvisorTool] Server-side tool enabled
+with claude-opus-5-5 as the advisor model`, so dropping the flag does not
+turn the advisor off; how to turn it off at launch is not established
+(`/advisor` can disable it inside a session).
 
 **9. Credential storage.** No credential file under `~/.claude-console`
 (only `.claude.json` and `backups/`). Claude stores OAuth credentials in
