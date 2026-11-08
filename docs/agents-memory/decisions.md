@@ -2,6 +2,15 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-11-08: Claude chrome and side panels are found by structure, not content
+
+Claude Code's footer changes with width, model and plugins, so the closed input box (rule, bare `❯`,
+rule; the opening rule may carry one label, such as `ultracode`) marks where chrome starts, and limit
+evidence comes only from above it. A side panel (Flightdeck) is cut by geometry before the detection
+window: an aligned `│` run touching the box at chat column 40 or more. Any doubt leaves the read
+whole, because review showed a cut chat-side box or tree makes an older banner look current.
+PR: https://github.com/johncioni/orca-watchdog/pull/50, https://github.com/johncioni/orca-watchdog/pull/114
+
 ## 2026-10-31: Codex limit forms come from Codex's source; resets only from the retry clause
 
 Codex picks its usage-limit sentence by plan and model limit, so check `UsageLimitReachedError` and
@@ -89,11 +98,3 @@ falls back to local time. A DST-overlap clock always takes the later
 occurrence: an unsent, unchanged banner skips the moved-later hold (#56), so
 an earlier pick resumed before the reset (DOG-61). Up to an hour late is accepted.
 PR: https://github.com/johncioni/orca-watchdog/pull/54, https://github.com/johncioni/orca-watchdog/pull/73
-
-## 2026-09-22: Claude footer chrome is structural, not content
-
-Claude Code's footer changes with terminal width, model and plugins, so
-content regexes miss on other layouts. The closed input box
-(`chrome.footerStart`: rule, bare `❯`, rule) marks where chrome starts, and
-limit evidence comes only from above it, where real agent output always is.
-PR: https://github.com/johncioni/orca-watchdog/pull/50
