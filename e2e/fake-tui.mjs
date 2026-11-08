@@ -41,12 +41,12 @@ if (mode === '--session-limit') {
     '─'.repeat(128),
     '❯',
     '─'.repeat(128),
-    '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e* [+37 -29]) │ floating-wondering-crescent │ ⏱️   4h 52m │ Cost $59.80',
+    '  [Fable 5.1 ◑ high] │ xxxxxxxx git:(xxxx/xxxx-xx* [+37 -29]) │ xxxxxxxx-xxxxxxxxx-xxxxxxxx │ ⏱️   4h 52m │ xxxxxxxxxxx',
     '  Context ██░░░░░░░░ 23% │ Usage Weekly ████░░░░░░ 39% (resets in 5d 1h)',
     '  2 CLAUDE.md | 1 MCPs | 15 hooks',
-    '  ~2026-09-21-plan-2e-automation-engine.md(+37 -29)',
+    '  ~2026-09-21-xxxx-xx-xxxxxxxxxx-xxxxxx.md(+37 -29)',
     '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent',
-    '  ⧉  plan-2e-automation-engine',
+    '  ⧉  xxxx-xx-xxxxxxxxxx-xxxxxx',
   ].forEach((line) => console.log(line));
 } else if (mode === '--gemini') {
   console.log('─'.repeat(60));

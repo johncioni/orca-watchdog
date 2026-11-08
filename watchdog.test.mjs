@@ -223,7 +223,8 @@ const runFakeTui = (...args) => {
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.replace(/\n$/, '').split('\n');
 };
-// Verbatim physical lines from .superpowers/captures/dog48-term_*.json.
+// Physical lines from .superpowers/captures/dog48-term_*.json; private text
+// is masked with equal-width ASCII replacements, preserving screen geometry.
 const CLAUDE_500_CAPTURE = [
   '⏺ API Error: 500 Internal server error. This is',
   '  a server-side issue, usually temporary — try',
@@ -231,21 +232,21 @@ const CLAUDE_500_CAPTURE = [
   '  https://status.claude.com.',
   '✻ Worked for 1m 42s · done 8:57 PM',
   '❯ try to resume where you left off',
-  '⏺ Using the writing-plans skill to create the',
-  '  implementation plan. First, reading the code the plan',
-  '  has to quote so every task carries real, runnable',
-  '  edits.',
-  '  Checking test discovery in the gate, the test price',
-  '  table, weekday tables for the calendar cases, and the',
-  '  pre-upgrade render test',
-  '  ⎿  $ grep -n "node --test\\|node --check\\|for f',
-  '     in\\|\\.mjs" scripts/orca-setup.sh | head; cat',
-  '     test/fixtures/prices-test.json; python3 -c "',
-  '     import datetime as dt',
-  "     W=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']",
-  '     for y,m,d in',
-  '     [(2026,3,3),(2027,1,2),(2026,3,10),(2026,11,3)]:',
-  '     t=dt.date(y,m,d); print([( (t-dt.ti…',
+  '⏺ xxxxx xxx xxxxxxx-xxxxx xxxxx xx xxxxxx xxx',
+  '  xxxxxxxxxxxxxx xxxx. xxxxx, xxxxxxx xxx xxxx xxx xxxx',
+  '  xxx xx xxxxx xx xxxxx xxxx xxxxxxx xxxx, xxxxxxxx',
+  '  xxxxx.',
+  '  xxxxxxxx xxxx xxxxxxxxx xx xxx xxxx, xxx xxxx xxxxx',
+  '  xxxxx, xxxxxxx xxxxxx xxx xxx xxxxxxxx xxxxx, xxx xxx',
+  '  xxx-xxxxxxx xxxxxx xxxx',
+  '  ⎿  $ xxxx -x "xxxx --xxxx\\|xxxx --xxxxx\\|xxx x',
+  '     xx\\|\\.xxx" xxxxxxx/xxxx-xxxxx.xx | xxxx; xxx',
+  '     xxxx/xxxxxxxx/xxxxxx-xxxx.xxxx; xxxxxxx -x "',
+  '     xxxxxx xxxxxxxx xx xx',
+  "     x=['xxx','xxx','xxx','xxx','xxx','xxx','xxx']",
+  '     xxx x,x,x xx',
+  '     [(xxxx,x,x),(xxxx,x,x),(xxxx,x,xx),(xxxx,xx,x)]:',
+  '     x=xx.xxxx(x,x,x); xxxxx([( (x-xx.xx…',
   '✢ Flibbertigibbeting… (4m 43s · ↓ 20.0k tokens)',
   '  ⎿  Tip: Run /install-github-app to tag @claude right',
   '     from your Github issues and PRs',
@@ -253,17 +254,17 @@ const CLAUDE_500_CAPTURE = [
   '❯',
   '─'.repeat(55),
   '  [Fable 5.1 ◔ medium]',
-  '  orca-ops git:(johncioni/ops-8-daily-trend-docs)',
-  '  swift-wondering-storm │ ⏱️   23h 3m │ Cost $100.95',
+  '  xxxx-xxx git:(xxxxxxxxx/xxx-x-xxxxx-xxxxx-xxxx)',
+  '  xxxxx-xxxxxxxxx-xxxxx │ ⏱️   23h 3m │ xxxxxxxxxxxx',
   '  Context █░░░ 24%',
   '  Usage   ███░ 78% (resets in 3h 20m)',
   '  2 CLAUDE.md | 15 hooks',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
 ];
 const CLAUDE_529_CAPTURE = [
-  '⏺ Rewriting the plan now, section by section. Reading',
-  '  the header, constraints, deviations, and file map',
-  '  first.',
+  '⏺ xxxxxxxxx xxx xxxx xxx, xxxxxxx xx xxxxxxx. xxxxxxx',
+  '  xxx xxxxxx, xxxxxxxxxxx, xxxxxxxxxx, xxx xxxx xxx',
+  '  xxxxx.',
   '  Read 2 files',
   '⏺ API Error: 529 Overloaded. This is a',
   '  server-side issue, usually temporary — try',
@@ -272,30 +273,30 @@ const CLAUDE_529_CAPTURE = [
   '✻ Cooked for 21m 11s · done 8:56 PM',
   '❯ try to resume were you left off',
   '  Searching for 1 pattern, running 6 shell commands…',
-  '  ⎿  $ grep -n "hello\\b" -A 30',
-  '     convex/lib/studioDefaultTemplates.ts | grep -n',
-  '     "blank\\|tokenId\\|key:\\|stageAdvance\\|sendPolicy" |',
-  '     head -20; echo ---E2ETEMPL; grep -n',
-  '     "E2E_TEMPLATE_KEY_PREFIX\\|function',
-  '     upsertE2ETemplate\\|function',
-  '     e2eActiveBodyDoc\\|function paragraphTextDoc"',
-  '     convex/intake.ts | head; echo -…',
+  '  ⎿  $ xxxx -x "xxxxx\\x" -x xx',
+  '     xxxxxx/xxx/xxxxxxxxxxxxxxxxxxxxxx.xx | xxxx -x',
+  '     "xxxxx\\|xxxxxxx\\|xxx:\\|xxxxxxxxxxxx\\|xxxxxxxxxx" |',
+  '     xxxx -xx; xxxx ---xxxxxxxx; xxxx -x',
+  '     "xxx_xxxxxxxx_xxx_xxxxxx\\|xxxxxxxx',
+  '     xxxxxxxxxxxxxxxxx\\|xxxxxxxx',
+  '     xxxxxxxxxxxxxxxx\\|xxxxxxxx xxxxxxxxxxxxxxxx"',
+  '     xxxxxx/xxxxxx.xx | xxxx; xxxx -…',
   '· Crunching… (deep in thought with high effort)',
   '  ⎿  Tip: Running multiple Claude sessions? Use /color',
   '     and /rename to tell them apart at a glance.',
   '─'.repeat(55),
   '❯',
   '─'.repeat(55),
-  '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e)',
-  '  floating-wondering-crescent │ ⏱️   1h 33m',
-  '  Cost $40.78',
+  '  [Fable 5.1 ◑ high] │ xxxxxxxx git:(xxxx/xxxx-xx)',
+  '  xxxxxxxx-xxxxxxxxx-xxxxxxxx │ ⏱️   1h 33m',
+  '  xxxxxxxxxxx',
   '  Context █░░░ 22%',
   '  Usage   ███░ 80% (resets in 3h 20m)',
   '  2 CLAUDE.md | 15 hooks',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← …',
-  '  ⧉  plan-2e-automation-engine',
+  '  ⧉  xxxx-xx-xxxxxxxxxx-xxxxxx',
 ];
-// Verbatim footer shapes from the round-1 evidence captures. The first wide
+// Footer shapes from the round-1 evidence captures, with private text masked. The first wide
 // Opus line is active agent output, so only the box beginning at its rule is
 // part of the positive footer fixture.
 const CLAUDE_WIDE_OPUS_CAPTURE = [
@@ -303,7 +304,7 @@ const CLAUDE_WIDE_OPUS_CAPTURE = [
   '─'.repeat(128),
   '❯',
   '─'.repeat(128),
-  '  [Opus 4.8 (1M context) ◕ xhigh] │ dog48-history-marker git:(johncioni/dog48-history-marker) │ ⏱️   <1m │ Cost $0.859',
+  '  [Opus 4.8 (1M context) ◕ xhigh] │ dog48-history-marker git:(johncioni/dog48-history-marker) │ ⏱️   <1m │ xxxxxxxxxxx',
   '  Context █░░░░░░░░░ 7% │ Usage ██░░░░░░░░ 23% (resets in 4h 32m)',
   '  2 CLAUDE.md | 1 MCPs | 15 hooks',
   '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
@@ -312,12 +313,12 @@ const CLAUDE_DOG50_WIDE_BOX = [
   '─'.repeat(128),
   '❯',
   '─'.repeat(128),
-  '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e* [+37 -29]) │ floating-wondering-crescent │ ⏱️   4h 52m │ Cost $59.80',
+  '  [Fable 5.1 ◑ high] │ xxxxxxxx git:(xxxx/xxxx-xx* [+37 -29]) │ xxxxxxxx-xxxxxxxxx-xxxxxxxx │ ⏱️   4h 52m │ xxxxxxxxxxx',
   '  Context ██░░░░░░░░ 23% │ Usage Weekly ████░░░░░░ 39% (resets in 5d 1h)',
   '  2 CLAUDE.md | 1 MCPs | 15 hooks',
-  '  ~2026-09-21-plan-2e-automation-engine.md(+37 -29)',
+  '  ~2026-09-21-xxxx-xx-xxxxxxxxxx-xxxxxx.md(+37 -29)',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent',
-  '  ⧉  plan-2e-automation-engine',
+  '  ⧉  xxxx-xx-xxxxxxxxxx-xxxxxx',
 ];
 const CLAUDE_DOG50_NARROW_BOX = [
   '─'.repeat(55),
@@ -331,23 +332,23 @@ const CLAUDE_DOG50_NARROW_BOX = [
 const CLAUDE_SESSION_LIMIT_WIDE = [
   '❯ usage is available again',
   '  Made 2 scratchpad edits +1450, read 1 file, ran 1 shell command',
-  '  ⎿  Referenced file ../../../../../private/tmp/claude-501/-Users-john-orca-projects-GlamBook/1ebb470b-23e6-4bf0-89a9-ef6ad65ead',
-  '     8c/scratchpad/plan2e/tasks/t03.md',
-  '  ⎿  Referenced file ../../../../../private/tmp/claude-501/-Users-john-orca-projects-GlamBook/1ebb470b-23e6-4bf0-89a9-ef6ad65ead',
-  '     8c/scratchpad/plan2e/tasks/t02.md',
-  '  ⎿  Referenced file ../../../../../private/tmp/claude-501/-Users-john-orca-projects-GlamBook/1ebb470b-23e6-4bf0-89a9-ef6ad65ead',
-  '     8c/scratchpad/plan2e/tasks/t01.md',
-  '  ⎿  Referenced file docs/superpowers/plans/2026-09-21-plan-2e-automation-engine.md',
+  '  ⎿  Referenced file ../../../../../xxxxxxx/xxx/xxxxxx-xxx/-xxxxx-xxxx-xxxx-xxxxxxxx-xxxxxxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx',
+  '     xx/xxxxxxxxxx/xxxxxx/tasks/t03.md',
+  '  ⎿  Referenced file ../../../../../xxxxxxx/xxx/xxxxxx-xxx/-xxxxx-xxxx-xxxx-xxxxxxxx-xxxxxxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx',
+  '     xx/xxxxxxxxxx/xxxxxx/tasks/t02.md',
+  '  ⎿  Referenced file ../../../../../xxxxxxx/xxx/xxxxxx-xxx/-xxxxx-xxxx-xxxx-xxxxxxxx-xxxxxxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx',
+  '     xx/xxxxxxxxxx/xxxxxx/tasks/t01.md',
+  '  ⎿  Referenced file docs/superpowers/plans/2026-09-21-xxxx-xx-xxxxxxxxxx-xxxxxx.md',
   '  ⎿  Read HANDOFF.md (47 lines)',
   '  ⎿  Skills restored (writing-guidelines, humanizer, superpowers:writing-plans)',
-  '⏺ Writing Task 5 and Task 6 rev-2 files now, then continuing through Task 16 before assembling the plan.',
+  '⏺ xxxxxxx xxxx x xxx xxxx x xxx-x xxxxx xxx, xxxx xxxxxxxxxx xxxxxxx xxxx xx xxxxxx xxxxxxxxxx xxx xxxx.',
   '  Made 2 scratchpad edits +739, read 1 file, ran 3 shell commands',
-  '⏺ Writing Task 7 (stage advance, source-aware finalizeSend) now.',
+  '⏺ xxxxxxx xxxx x (xxxxx xxxxxxx, xxxxxx-xxxxx xxxxxxxxxxxx) xxx.',
   '  Made 4 scratchpad edits +1116 -18, ran 2 shell commands',
-  '⏺ Tasks 3 through 8 are written. Reading the rev-1 Task 9 and 10 sections plus the updateFields and reply anchors next, so Tasks',
-  '  9 and 10 can be written in one pass.',
+  '⏺ xxxxx x xxxxxxx x xxx xxxxxxx. xxxxxxx xxx xxx-x xxxx x xxx xx xxxxxxxx xxxx xxx xxxxxxxxxxxx xxx xxxxx xxxxxxx xxxx, xx xxxxx',
+  '  x xxx xx xxx xx xxxxxxx xx xxx xxxx.',
   '  Made 2 scratchpad edits +539, ran 4 shell commands',
-  '⏺ Tasks 3 through 10 are written. Reading rev-1 Tasks 11 and 12 next to rework the SLA scan and webhook dedup.',
+  '⏺ xxxxx x xxxxxxx xx xxx xxxxxxx. xxxxxxx xxx-x xxxxx xx xxx xx xxxx xx xxxxxx xxx xxx xxxx xxx xxxxxxx xxxxx.',
   '  Ran 1 shell command',
   "  ⎿  You've hit your session limit · resets 12:30am (America/New_York)",
   '     /upgrade to increase your usage limit.',
@@ -356,12 +357,12 @@ const CLAUDE_SESSION_LIMIT_WIDE = [
   '─'.repeat(128),
   '❯',
   '─'.repeat(128),
-  '  [Fable 5.1 ◑ high] │ GlamBook git:(docs/plan-2e* [+37 -29]) │ floating-wondering-crescent │ ⏱️   4h 52m │ Cost $59.80',
+  '  [Fable 5.1 ◑ high] │ xxxxxxxx git:(xxxx/xxxx-xx* [+37 -29]) │ xxxxxxxx-xxxxxxxxx-xxxxxxxx │ ⏱️   4h 52m │ xxxxxxxxxxx',
   '  Context ██░░░░░░░░ 23% │ Usage Weekly ████░░░░░░ 39% (resets in 5d 1h)',
   '  2 CLAUDE.md | 1 MCPs | 15 hooks',
-  '  ~2026-09-21-plan-2e-automation-engine.md(+37 -29)',
+  '  ~2026-09-21-xxxx-xx-xxxxxxxxxx-xxxxxx.md(+37 -29)',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent',
-  '  ⧉  plan-2e-automation-engine',
+  '  ⧉  xxxx-xx-xxxxxxxxxx-xxxxxx',
 ];
 const CLAUDE_SESSION_LIMIT_NARROW = [
   '⏺ Codex accepted the follow-up and is working on the',
@@ -408,7 +409,8 @@ const CODEX_FOOTER = 'Context 16% used · 5h 36% left · weekly 90% left · gpt-
 const CODEX_TAIL = ['─ Worked for 2m 51s ───────────', CODEX_ERR, '', '› Ask Codex to do anything', CODEX_FOOTER];
 const outageTail = (line) => ['some earlier output', line, ...CHROME_TAIL];
 
-// DOG-77: verbatim tails from the 2026-11-08 Claude 5-hour limit captures.
+// DOG-77: tails from the 2026-11-08 Claude 5-hour limit captures; private
+// statusline text is masked at the same width.
 const CLAUDE_GOAL_LIMIT_REVIEW = [
   '⏺ Ran 5 stop hooks',
   "  ⎿  Stop hook error: Hook evaluator API error: You've hit your 5-hour limit · resets 12:20am (America/New_York)",
@@ -423,8 +425,8 @@ const CLAUDE_GOAL_LIMIT_REVIEW = [
   '─'.repeat(139),
   '❯',
   '─'.repeat(139),
-  '  [Opus 5.5 ◕ xhigh] │ phase3-3d-1-hardening',
-  '  Context ██░░░░░░░░ 16% │ Usage 7d 85% │ $3.09 │ 1h 33m',
+  '  [Opus 5.5 ◕ xhigh] │ xxxxxx-xx-x-xxxxxxxxx',
+  '  Context ██░░░░░░░░ 16% │ Usage 7d 85% │ $x.xx │ 1h 33m',
   '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
 ];
 const CLAUDE_GOAL_LIMIT_FALLBACK = [
@@ -442,8 +444,8 @@ const CLAUDE_GOAL_LIMIT_FALLBACK = [
   '─'.repeat(139),
   '❯',
   '─'.repeat(139),
-  '  [Opus 4.8 ◕ xhigh] │ ops-187-heredoc-guard',
-  '  Context ██░░░░░░░░ 17% │ Usage 7d 85% │ $7.29 │ 1h 48m',
+  '  [Opus 4.8 ◕ xhigh] │ xxx-xxx-xxxxxxx-xxxxx',
+  '  Context ██░░░░░░░░ 17% │ Usage 7d 85% │ $x.xx │ 1h 48m',
   '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
 ];
 const CLAUDE_LIMIT_WITHOUT_GOAL = CLAUDE_GOAL_LIMIT_REVIEW
@@ -470,6 +472,40 @@ for (const [name, tail] of [
       '2026-11-08T05:20:00.000Z');
   });
 }
+
+const CLAUDE_LONE_GOAL_PAUSED = [
+  '⏺ Some earlier work finished.',
+  '⏺ Goal paused · usage limit reached · send a message after it resets to continue',
+  '✻ Worked for 0s · done 10:56 PM',
+  'new task? /clear to save 171k tokens · ◎ /goal active (1h)',
+  '─'.repeat(80),
+  '❯',
+  '─'.repeat(80),
+  '  [Opus 5.5 ◕ xhigh] │ orca-watchdog',
+];
+
+test('DOG-79: a lone Goal paused row uses the 60-minute default', () => {
+  const now = new Date('2026-11-08T03:56:00Z');
+  const banner = detectBanner(CLAUDE_LONE_GOAL_PAUSED, 'claude', now);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: 'term_dog79', platform: 'claude', banner }, now).resetAt,
+    '2026-11-08T04:56:00.000Z');
+});
+
+test('DOG-79: the non-goal limit accepts an ASCII apostrophe in usage-credits chrome', () => {
+  const now = new Date('2026-11-08T03:56:00Z');
+  const tail = CLAUDE_LIMIT_WITHOUT_GOAL.map(row => row.replace('you’re', "you're"));
+  const banner = detectBanner(tail, 'claude', now);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: 'term_dog79', platform: 'claude', banner }, now).resetAt,
+    '2026-11-08T05:20:00.000Z');
+});
+
+test('DOG-79 guard: usage-credits chrome rejects text after its final period', () => {
+  const tail = CLAUDE_LIMIT_WITHOUT_GOAL.map(row => row.trim().startsWith('/upgrade')
+    ? row + ' Then I kept going.' : row);
+  assert.equal(detectBanner(tail, 'claude', new Date('2026-11-08T03:56:00Z')), null);
+});
 
 test('DOG-77 guard: a new message after the non-goal limit makes it stale', () => {
   const tail = CLAUDE_LIMIT_WITHOUT_GOAL.slice();
@@ -1221,7 +1257,7 @@ test('ordinary agent output ending at the input box does not match', () => {
 
 test('a stale error the agent worked past fails the final-block requirement', () => {
   assert.equal(detectBanner([CLAUDE_529, 'Retrying succeeded, continuing with the task.', 'Edited foo.js', '> '], 'claude'), null);
-  assert.equal(detectBanner([CLAUDE_529, 'john@mac ~ %'], 'claude'), null);
+  assert.equal(detectBanner([CLAUDE_529, 'user@mac ~ %'], 'claude'), null);
   assert.equal(detectBanner([CLAUDE_MARKER_529, CLAUDE_CONTINUATIONS[0], '⏺ The request recovered, so I continued working.', '> '], 'claude'), null);
 });
 
@@ -1253,7 +1289,7 @@ test('class precedence is chronological by the limit reached line (DOG-59)', () 
 });
 
 test('hasOutageLine reports a known payload regardless of envelope or trailing prose', () => {
-  assert.equal(hasOutageLine([CLAUDE_529, 'moved on', 'john@mac ~ %']), true);
+  assert.equal(hasOutageLine([CLAUDE_529, 'moved on', 'user@mac ~ %']), true);
   assert.equal(hasOutageLine(['I saw "API Error: 529 Overloaded" in quoted prose.']), true);
   assert.equal(hasOutageLine(['2026-09-21T12:00:00Z API Error: 500 Internal server error.']), true);
   assert.equal(hasOutageLine(['all good', '> ']), false);
@@ -1362,7 +1398,7 @@ test('detectBanner: limit-open requires Codex and marker (DOG-20)', () => {
 });
 test('detectBanner: stale, retry, draft, shell and near-miss continuations rejected (DOG-20)', () => {
   for (const trailing of ['• Reconnecting... 2/5', 'Reconnecting... waiting for network', 'esc to interrupt',
-    'Retrying in 5s', 'attempt 2 of 5', '› my half-typed reply', 'john@mac ~ %',
+    'Retrying in 5s', 'attempt 2 of 5', '› my half-typed reply', 'user@mac ~ %',
     'Continuing the task at 10:12 PM.', 'Try again at 10:12 PM. Now editing files.']) {
     assert.equal(detectBanner([OPEN_TAIL[0], trailing, '›'], 'codex'), null, trailing);
     assert.equal(detectBanner([...USAGE_WRAP, trailing, '›'], 'codex'), null, trailing);
@@ -2115,7 +2151,7 @@ test('reconcile: consent schedule caps six sends, deadline counts from consent (
 });
 
 test('isShellPrompt recognises shell prompts and treats bare Claude >/❯ as input boxes', () => {
-  for (const p of ['john@mac ~ $', '~ %', 'root#', 'repo ➜', 'λ', '❱', 'foo>', 'cmd>  ']) {
+  for (const p of ['user@mac ~ $', '~ %', 'root#', 'repo ➜', 'λ', '❱', 'foo>', 'cmd>  ']) {
     assert.equal(isShellPrompt(['API Error: 529', p, '', '  '], 'claude'), true, p);
   }
   assert.equal(isShellPrompt(['API Error: 529', '\x1b[32m~ %\x1b[0m']), true);
@@ -3638,6 +3674,64 @@ test('DOG-55 review F2: a counting-down relative banner still sends after the or
   assert.equal(state[H].attempts, 1);
 });
 
+test('DOG-79: a lone Goal paused resume re-parses the reprinted clock before another send', async () => {
+  const reprinted = [`❯ ${RESUME_TEXT}`,
+    "  ⎿  You've hit your 5-hour limit · resets 12:20am (America/New_York)",
+    ...CLAUDE_LONE_GOAL_PAUSED.slice(1)];
+  let state = {}, sends = 0;
+  const run = async (time, tail) => {
+    const h = harness({ tail, terminals: [T], state, now: new Date(time) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved(); sends += h.sent.length;
+  };
+  await run('2026-11-08T03:56:00Z', CLAUDE_LONE_GOAL_PAUSED);
+  assert.equal(state[H].kind, 'limit');
+  assert.equal(state[H].resetAt, '2026-11-08T04:56:00.000Z');
+  assert.equal(sends, 0);
+  await run('2026-11-08T04:55:59Z', CLAUDE_LONE_GOAL_PAUSED);
+  assert.equal(sends, 0);
+  // The limit schedule adds its two-minute safety buffer to the reset.
+  await run('2026-11-08T04:58:00Z', CLAUDE_LONE_GOAL_PAUSED);
+  assert.equal(sends, 1);
+  assert.equal(state[H].attempts, 1);
+  // The next read cannot send before the 30-minute retry spacing elapses.
+  await run('2026-11-08T05:18:00Z', reprinted);
+  assert.equal(state[H].resetAt, '2026-11-08T04:56:00.000Z');
+  assert.equal(sends, 1);
+  await run('2026-11-08T05:19:59Z', reprinted);
+  assert.equal(sends, 1);
+  await run('2026-11-08T05:28:00Z', reprinted);
+  assert.equal(state[H].resetAt, '2026-11-08T05:20:00.000Z');
+  assert.equal(state[H].resetAnchorAt, '2026-11-08T05:28:00.000Z');
+  assert.match(state[H].bannerText, /12:20am/);
+  assert.equal(state[H].attempts, 2);
+  assert.equal(sends, 2);
+});
+
+test('DOG-79: a later reprinted clock holds the lone Goal paused retry', async () => {
+  const reprinted = [`❯ ${RESUME_TEXT}`,
+    "  ⎿  You've hit your 5-hour limit · resets 7:20am (America/New_York)",
+    ...CLAUDE_LONE_GOAL_PAUSED.slice(1)];
+  let state = {}, sends = 0;
+  const run = async (time, tail) => {
+    const h = harness({ tail, terminals: [T], state, now: new Date(time) });
+    await tick({ dryRun: false }, h.deps);
+    state = h.saved(); sends += h.sent.length;
+  };
+  await run('2026-11-08T03:56:00Z', CLAUDE_LONE_GOAL_PAUSED);
+  await run('2026-11-08T04:58:00Z', CLAUDE_LONE_GOAL_PAUSED);
+  assert.equal(sends, 1);
+  await run('2026-11-08T05:28:00Z', reprinted);
+  assert.equal(state[H].resetAt, '2026-11-08T12:20:00.000Z');
+  assert.equal(state[H].resetAnchorAt, '2026-11-08T05:28:00.000Z');
+  assert.match(state[H].bannerText, /7:20am/);
+  assert.equal(state[H].attempts, 1);
+  assert.equal(sends, 1);
+  await run('2026-11-08T12:19:59Z', reprinted);
+  assert.equal(state[H].resetAt, '2026-11-08T12:20:00.000Z');
+  assert.equal(sends, 1);
+});
+
 test('DOG-56: an echoed resume and reprinted static relative banner re-baseline once', async () => {
   const banner = 'Claude usage limit reached. Try again in 3 hours.';
   const reprinted = [`❯ ${RESUME_TEXT}`, banner, '> '];
@@ -3729,7 +3823,7 @@ test('tick: an out-of-range reset banner creates an event with a fallback reset 
 
 // Orca 1.4.237 captures, 2026-10-23: final rows, excluding the Electron error.
 const DOG69_CODEX_HISTORY = [
-  '    Sent msg_d2327c6e433d',
+  '    Sent msg_xxxxxxxxxxxx',
   '    + Show details',
   '  Worked for 11s • 10:18 AM',
   '› Reply with the single word ok. Do not run any command or tool.',
@@ -3740,7 +3834,7 @@ const DOG69_CODEX_HISTORY = [
   '  ? for shortcuts',
 ];
 const DOG69_CODEX_DRAFT = [
-  '    Sent msg_d2327c6e433d',
+  '    Sent msg_xxxxxxxxxxxx',
   '    + Show details',
   '  Worked for 11s • 10:18 AM',
   '› Reply with the single word ok. Do not run any command or tool.',
@@ -3757,7 +3851,7 @@ const DOG69_CLAUDE_HISTORY = [
   '❯',
   '───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────',
   '  [Haiku 5.5 ○ low] │ dog-69',
-  '  Context ░░░░░░░░░░ 4% │ Usage 5h 9% · 7d 42% │ $0.0073 │ 22s',
+  '  Context ░░░░░░░░░░ 4% │ Usage 5h 9% · 7d 42% │ $x.xxxx │ 22s',
   '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent',
 ];
 const DOG69_CLAUDE_DRAFT = [
@@ -3768,7 +3862,7 @@ const DOG69_CLAUDE_DRAFT = [
   '❯',
   '───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────',
   '  [Haiku 5.5 ○ low] │ dog-69',
-  '  Context ░░░░░░░░░░ 4% │ Usage 5h 9% · 7d 42% │ $0.0073 │ 22s',
+  '  Context ░░░░░░░░░░ 4% │ Usage 5h 9% · 7d 42% │ $x.xxxx │ 22s',
   '  ⏵⏵ auto mode on (shift+tab to cycle)',
 ];
 
@@ -3884,12 +3978,12 @@ test('isInputOccupied: Gemini draft counts only for Gemini; the placeholder does
 test('isInputOccupied: a shell prompt carrying an unsubmitted command is occupied (DOG-24)', () => {
   // Belt-and-suspenders behind the final-block detection guard: a populated shell
   // line ends in ordinary text, so a naive send would append+submit the command.
-  assert.equal(isInputOccupied(['API Error: 529', '', 'john@mac ~ % echo do-not-submit']), true);
+  assert.equal(isInputOccupied(['API Error: 529', '', 'user@mac ~ % echo do-not-submit']), true);
   assert.equal(isInputOccupied(['$ npm test']), true);
   assert.equal(isInputOccupied(['repo git:(main) ➜ rm -rf build']), true);
   // The EMPTY shell prompt is the exited-to-shell case (isShellPrompt drops it);
   // it must NOT read as occupied, or that drop path would be masked.
-  assert.equal(isInputOccupied(['john@mac ~ %']), false);
+  assert.equal(isInputOccupied(['user@mac ~ %']), false);
   assert.equal(isInputOccupied(['Done. 50% coverage; costs $5 total.']), false);   // not a prompt+command
 });
 
@@ -4075,7 +4169,7 @@ test('tick: a limit banner trailing a shell prompt is stale on the fresh re-read
   // ticks send nothing — the exited-to-shell case stays no-send.
   const st = { [H]: { ...LIMIT_EV, platform: 'claude', bannerText: BANNER, detectedAt: NOW.toISOString(), resetAt: NOW.toISOString(),
     attempts: 0, lastAttemptAt: null, status: 'waiting' } };
-  const shellTail = ['Claude usage limit reached. Your limit will reset at 3am.', 'john@mac ~ %'];
+  const shellTail = ['Claude usage limit reached. Your limit will reset at 3am.', 'user@mac ~ %'];
   const h = harness({ tail: [...CLAUDE_BANNER, '? for shortcuts'], terminals: [T], state: st });
   let reads = 0; const inner = h.deps.orca;
   h.deps.orca = async (args) => (args[1] === 'read' && ++reads === 2) ? { terminal: { tail: shellTail } } : inner(args);
