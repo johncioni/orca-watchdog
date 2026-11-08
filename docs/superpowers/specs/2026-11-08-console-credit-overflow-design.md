@@ -201,18 +201,27 @@ the reset. Spending the whole credit is fine; it is otherwise wasted.
   nothing more.
 - **Request lifecycle:** from the moment a request is written until it is
   confirmed or cancelled, the controller alone acts on that terminal and
-  its limit event yields to it. Confirmed means the wrapper registered a new
-  generation in the target mode for the same session and Claude's pid file
-  shows that session live after a settle time; a changed launch time alone
-  is not confirmation. Unconfirmed `/exit` sends are retried a bounded
-  number of times, then the request is cancelled. A request is also
-  cancelled when its registration dies or changes generation, when the
-  deadline passes before a Console switch is consumed, or when credit is
-  marked exhausted before it is consumed. Requests survive a watchdog or
-  wrapper restart and are re-evaluated by these rules. On cancellation or a
-  failed relaunch the controller logs an error (visible in `status` and
-  the log) and the terminal goes back to the ordinary limit path, with no
-  further switch attempts for that launch.
+  its limit event yields to it. A request for wrapper W, generation G and
+  session S has one expected successor: generation G+1 registered by the
+  same wrapper W for session S. Confirmed means that successor is
+  registered in the target mode and Claude's pid file shows session S live
+  after a settle time; a changed launch time alone is not confirmation.
+  While the successor is registered but not yet settled, the request stays
+  pending and keeps exclusive ownership: no `/exit`, no ordinary send, no
+  cancellation. `/exit` is sent, and retried a bounded number of times,
+  only while generation G is still the registered one; once the successor
+  exists, no more `/exit` goes out for this request. The request is
+  cancelled when W dies, when a generation other than G or its expected
+  successor is registered, when its retries run out with G still
+  registered, when the deadline passes before a Console switch is
+  consumed, or when credit is marked exhausted before it is consumed. A
+  successor that fails to settle, or the wrapper's fallback relaunch on Max
+  in place of a requested Console launch, is a failed relaunch. Requests
+  survive a watchdog or wrapper restart and are re-evaluated by these
+  rules. On cancellation or a failed relaunch the controller logs an error
+  (visible in `status` and the log) and the terminal goes back to the
+  ordinary path, and the controller makes no further switch attempts for
+  that wrapper (a person relaunching the session starts a new wrapper).
 - **Sessions not stalled:** a wrapper session that never showed the banner
   is left alone; if it hits the limit later it switches then. Any eligible
   wrapper launch during the Console window starts on Console.
