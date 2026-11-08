@@ -77,7 +77,9 @@ because it is an Orca setting that reaches John's own tabs). The value is
 a program plus prefix arguments; it is rejected if it contains `$`,
 backticks, newlines, an environment assignment or shell metacharacters,
 and a leading `~/` is expanded. Orca resolves the program to an absolute
-path and keeps `agentDefaultArgs` and `agentDefaultEnv`. An absolute path
+path. The source read shows only the program and prefix arguments being
+resolved; that `agentDefaultArgs` and `agentDefaultEnv` are still applied
+is likely but not verified. An absolute path
 bypasses the zsh `claude` function, so the adapter must allocate
 `CLAUDE_CODE_TMPDIR` itself, as the spec says. Orca sets
 `ORCA_TERMINAL_HANDLE` (and `ORCA_PANE_KEY`, `ORCA_TAB_ID`) in the tab's
@@ -203,5 +205,7 @@ never consume a request.
   `hasClaudeMdExternalIncludesWarningShown`; lock protocol in item 13.
 - Links: `projects` → `~/.claude/projects` (done). Which user files
   (`settings.json`, `plugins/`, `skills/`, `agents/`, `commands/`) are
-  shared is open for Task 3, with item 8 as the evidence.
+  shared is open for Task 3, with item 8 as the evidence. Do not link
+  `CLAUDE.md`: for any cwd under `/Users/john` the parent walk already
+  loads `~/.claude/CLAUDE.md` (item 3), so a link would load it twice.
 - Options: item 11.
