@@ -483,6 +483,291 @@ test('DOG-77 guard: the usage-credits continuation alone is not a limit', () => 
     'claude', new Date('2026-11-08T03:56:00Z')), null);
 });
 
+// DOG-78: sanitized 52-row rendered screens from 2026-11-08. Word characters
+// are replaced at equal code-point widths; whitespace, borders and punctuation
+// retain the captures' geometry. Only public TUI chrome and limit-like agent
+// prose are kept verbatim. Panel text deliberately carries no product identity.
+const panelRow = (chat, panel, column) => {
+  assert.ok([...chat].length <= column);
+  return chat + ' '.repeat(column - [...chat].length) + panel;
+};
+const CLAUDE_PANEL_95 = [
+  panelRow("", "│                                         ✕", 95),
+  panelRow("", "│         xxxxxxxxxx · xxxx x.x xxxx", 95),
+  panelRow("⏺ xxxxxxxxxx xxxxxxx \"xxxx xxx xxx xxxxxxx xxx xxxx x xxxxxx xxxxxxx\" xxxxxxxxx (xxxx xxxx x)", "│   ■ xxxx  ■ xxxxxx  ■ xxxx  ■ xxxxxxxxx", 95),
+  panelRow("", "│╭─────────────────────────────────────────╮", 95),
+  panelRow("⏺ Your Claude usage limit has been reached, so I'm stopping here.", "││ xxxx x.x · xxxx                  ○ xxxx │", 95),
+  panelRow("", "││ xxxxxx ▮▮▮▯ xxxx                        │", 95),
+  panelRow("  xxxx'x xxxx:", "││ xxx ▰▰▰▰▰▰▰▱▱▱ xx% xxxx/xxxx  ⟲xx       │", 95),
+  panelRow("  - xxxx xx: xxxxxx xx xx #xxx. xxxxx x'x xxxx xxxxxxxx xxx xx xxx-xx, xxxxxxx xx xx xxxx xxx", "││ $xxx   xx ▰▰▰▰▰ xx%  xx ▰▰▰▰▱ xx%       │", 95),
+  panelRow("    xxxxxx xxx xxxxx x, x, x xxx xx/xx.", "││ xxxx xxx  xxxx x.xx                     │", 95),
+  panelRow("  - xxxxxxxxxx x.x.x: xxxxxx xx xx #xxx.", "│╰─────────────────────────────────────────╯", 95),
+  panelRow("  - xxxx x (xxx-xx xxx xxx-xx): xxxxxxxxx xx xxxxxxx xx xxxxxxxxx/xxxxxx-xx-x-xxxxxxxxx (xxx", "│•●────────────────────•●───────────────────", 95),
+  panelRow("    xxxxxx). xxx xxxx xxxx xxxxxx.", "│╭─────────────────────────────────────────╮", 95),
+  panelRow("  - xxxx x'x xxxx xxxx xxxxxx: xxx xxxxxxx xx \"xxx x xxx x\". xxxx xxxxxxxx xxx xxxxxxx xxxxx,", "││ xxxxxxxxx · xxxxxxxx        xxxxxxxx xx │", 95),
+  panelRow("    xxx xxxxx xxxx:", "││ ◆━━━◆◆━━━━━◆◆◆━━━◆━━━━━━━◆━━━━━━━━◆◆◆━━ │", 95),
+  panelRow("    x. xxxxxxx xxxxx xxx xxxx'x xxx xxxxx, xxx xxx xxxx xxxx xxx xxxx xxxx xxxxx xxxx x", "││ xxxxxxxxxx xxxxx xx:xx:xx               │", 95),
+  panelRow("       xxxxxxxxxxx xxxx xxxxx.", "││ ◆ xxxxxx x xxxx  ◇ xxxxx xxxxxxx        │", 95),
+  panelRow("    x. xxxxxxx xxxxx xxxx xxxx x xxxx-xxxxxxxxxx xxxxx xx xxxxxxx xxxxx xxx xxxxx xxxxx xxxxx", "││ ◇ xxxxxx xxxx  (xxxxxxxx)               │", 95),
+  panelRow("       xxxxx xxxxxx.", "│╰─────────────────────────────────────────╯", 95),
+  panelRow("", "│───────────────────────────────────────────", 95),
+  panelRow("  xxxx'x xxxx, xxx xxxxxxx xx xxxxxxx.xx:", "│╭─────────────────────────────────────────╮", 95),
+  panelRow("  x. xxxxxx xx xxx xxx xxxxxxxx, xxxxx xxx xxxxxx xxx, xxx xxxx xxx xxxxxx xxxxxxx.", "││ xxxx · xxxxxxxxxxx          xxxx xxxxxx │", 95),
+  panelRow("  x. xxxx xxx xxxxxxx xxxxx xxxx xx xxx xxxxxxxxxxx xx x xxxxx-x xxxx (xxx, xxxx), xxxx", "││ ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ │", 95),
+  panelRow("     xx-xxxxxx.", "││ ■ xxxx xxxxxxx  ■ x xxx  ✗ x xxxxxx     │", 95),
+  panelRow("  x. xxxx xxx xxxxxx, xxxx xxx xx xxx xxxxx xx.", "││ x: xxxx xxx  x: xxxxx xxxx  x: xxxxx xx │", 95),
+  panelRow("  x. xxxx xx xxx xxxxxx xxx xxxxx'x xxx .xxxxx/xxxxx/ xxxxxxx xxxx.", "│╰─────────────────────────────────────────╯", 95),
+  panelRow("  x. xxxx xx xx xxxx x.", "│───────────────────────────────────────────", 95),
+  panelRow("", "│╭─────────────────────────────────────────╮", 95),
+  panelRow("  The limit resets at 12:20am New York time.", "││ ✓ xxxx xxxx xx · x xxxxxx · x… · +$x.xx │", 95),
+  panelRow("", "│╰─────────────────────────────────────────╯", 95),
+  panelRow("✻ Crunched for 17s · done 10:54 PM", "│", 95),
+  panelRow("", "│╭─────────────────────────────────────────╮", 95),
+  panelRow("⏺ xxxxxxxxxx xxxxxxx \"xxxxx xxx xxxxxx xxx xxx xxxxxxx\" xxxxxx xxxx xxxx xxxx x", "││ xxxxxxx xxx                             │", 95),
+  panelRow("", "││ xx:xx:xx xxxxxx       xxxx xxxxxxxxxxxx │", 95),
+  panelRow("⏺ xxx xxxxxx xxxxxxx xxxxxxx xx xxx xxx xxxxxxx xxxxxxx xxx xxxxxxx: xxx xxxxxx xxx xxxxxxxx", "││ xx:xx:xx xxxxxx       xxxx xxxxxxxxxxxx │", 95),
+  panelRow("  xxx xxx xx xxxxxx xxxx, xx xxxxx'x xxxxxxx xx xxx xx.", "││ xx:xx:xx xxxxxx       xxxx xxxxxxxxxxxx │", 95),
+  panelRow("", "││ xx:xx:xx xxxx         xxxxx → xxx-xx/x… │", 95),
+  panelRow("  Your usage limit has been reached, so I'm stopping. Where things stand is the same as in my", "││ xx:xx:xx xxx          x xxxxxxx xxx xx… │", 95),
+  panelRow("  xxxx xxxxxxx, xxx xxxxxxx.xx xxx xxx xxxxx. xxxx, xxxxx xxx xxxxx xx xx:xxxx xxx xxxx xxxx:", "││ xx:xx:xx xxxxxx       xxxx xxxxxxxxxxxx │", 95),
+  panelRow("  x. xxxxx xxx xxxx x xxxxxx xxx.", "││ xx:xx:xx xxxxxx       xxxx xxxxxxxxxxxx │", 95),
+  panelRow("  x. xxxx xxx xxx xxxxxxx xxxxx xxxx xx xxx xxxxxxxxxxx xx x xxxxx-x xxxx.", "│╰─────────────────────────────────────────╯", 95),
+  panelRow("  x. xx-xxxxxx, xxxx xxxx xxx xx xxx xxxxx xx.", "│", 95),
+  panelRow("", "│", 95),
+  panelRow("✻ Baked for 7s · done 11:12 PM", "│", 95),
+  panelRow("                                                       ✔ Update installed · Restart to update", "│", 95),
+  "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "❯",
+  "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "  [xxxx x.x ◑ xxxx] │ xxxxxxxx xxx:(xxxx* [+x -x]) │ ⏱️   xxx xxx │ xxxx $xxx.xx",
+  "  xxxxxxx ███░░░░░░░ xx% │ xxxxx xxxxxx █████████░ xx% (xxxxxx xx xxx)",
+  "  x xxxxxx.xx | x xxxx | xx xxxxx",
+  "  ~xxxxxx.xx(+x -x)  ?x",
+  "  ⏵⏵ xxxxxx xxxxxxxxxxx xx (xxxxx+xxx xx xxxxx) · ⧉ xxxxxx · ← x xxxxx",
+];
+const CLAUDE_PANEL_93 = [
+  panelRow("     xxxx xx xxxxx xxxx xxxxxxxxx. x xxxxx xxxxxx xxxxx xxxx xxxxxx xx xx xxxx xx xx xxxxxx", "│                                           ✕", 93),
+  panelRow("     xx, xxxx xxxx xxxx xxxxxxx xxx xxxx xxxxxxxxx.", "│    ■ xxxx  ■ xxxxxx  ■ xxxx  ■ xxxxxxxxx", 93),
+  panelRow("     - **xxxx xx xxx xxxx:**", "│╭───────────────────────────────────────────╮", 93),
+  panelRow("       - xx x xxx xx xxxxx xxx xxxxxx xxxxxxx xx xxx xx xxxx, xx xxxxx, xxxxxxxx xxx", "││ xxxx x.x · xxxx                    ○ xxxx │", 93),
+  panelRow("     xxxxxxxxxx xxx'x xx xxxxxxx.", "││ xxxxxx ▮▮▮▮ xxxxx                         │", 93),
+  panelRow("       - xxxxxxx xxxxxxx xxx xxxxxxx xx xxxxx xxxx xxxx, xxxxx xxxxx xxxxxxxx xxxxx.", "││ xxx ▰▰▰▰▱▱▱▱▱▱ xx% xxxx/xxxx  ⟲x          │", 93),
+  panelRow("       - xxxxxxx xxxxx xxx xxx xxx xx xx xxxxxx xxxxx, xxx xxxxxx xxxxxx xx'x xxxxxxx xxx", "││ $xxx   xx ▰▰▰▰▰ xx%  xx ▰▰▰▰▱ xx%         │", 93),
+  panelRow("     xxxx xxxxx xxx xxxxxx xxxxx xxx. xxx xxxx xxxxxxx xxx xxxxxxxxx xxx xxxx xxxxx, xxx xxx", "││ xxxx xxx  xxxx x.xx                       │", 93),
+  panelRow("     xxxx xxxx xxx xx xxxxxxx.", "│╰───────────────────────────────────────────╯", 93),
+  panelRow("       - xxxx xxxx xxxxxx x xxxxxxxxxx xxxxxxxxx xxxx xxxxxxx.", "│─────────────────────────────────────────────", 93),
+  panelRow("     - **xxxxxxxxxx xxx xxxx:**", "│╭───────────────────────────────────────────╮", 93),
+  panelRow("       - xxx xxxxxxx xxxxx xxxx (xxxx xx) xx xxxxx xxxxxxxxx xxx xxxxxx xxx xxxxx xxxx xxx", "││ xxxxxxxxx · xx xxxx            xxxxxxxx x │", 93),
+  panelRow("     xxx xxxxx xxxx xxxxx xxxxx xxxxx x. xx xxxxxxxx xxx xxxxx xx% xx xxxxxxxxxx xxxxxx xxxx.", "││ ◆◆───────◆◆───◆────◆─────────────────◆─── │", 93),
+  panelRow("       - xxxx xxxxxxxx xxx xxxxxxxx (x xxxx xxxxxxxx xxxxx, xxxx xxxx xxx xxxxx xx x xxxx)", "││ xxxx xxxxx xxx · xxxx xxxxx               │", 93),
+  panelRow("     xxxx xxx xxxxx xxxxxxxxxx xxxx xx xxx xxxxx xxxx, xxxxx xxxxx xxxx xxx xxxxxxxx.", "││ ◆ xxxxxx x xxxx  ◇ xxxxx xxxxxxx          │", 93),
+  panelRow("       - xxxxxxx xxx xxxxxxxx xxxxx xxx xxxxxx xxxx.", "││ ◇ xxxxxx xxxx  (xxxxxxxx)                 │", 93),
+  panelRow("     - **xxxxxx xxxx:** xxxxxxx xxxxxxxxx xx xx xx xxxx xxxx xxx xxx xxxx-xxxx xxxxx xxxxx", "│╰───────────────────────────────────────────╯", 93),
+  panelRow("     xxxxx. xxxx xx xxxx, xxx xxxxx xxx xxxx xxxx xxxxx xxxxxxxx xxx, xxx xxxx xxxxxxxxx.", "│─────────────────────────────────────────────", 93),
+  panelRow("     - **xx/xx:** xxx xxxxxxxxxx xxxxx xxxxxx xx x/xx. xxx xxxxxxxxxxxxxx xx xx xxxx xxx", "│╭───────────────────────────────────────────╮", 93),
+  panelRow("     xxxxx xxxx xxxx xxx xxxxxx xx xxxxxx xxxx xxxxxxx xx.", "││ xxxx · xxxxxxxxxxx            xxxx xxxxxx │", 93),
+  panelRow("", "││ ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ │", 93),
+  panelRow("     xxxx xxxxxxx xxx xx `/xxxxx/xxxx/.xxxxx/xxxxxx-xxxxxxxx/xxxxxx/xxxxxx-xxx/-xxxxx-xxxx-xx", "││ ■ xxxx xxxxxxx  ■ x xxx  ✗ x xxxxxx       │", 93),
+  panelRow("     xxxxxxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/xxxxxxxxxx/xxxxxx/`. xxx xxxxx xxx", "││ x: xxxx xxx  x: xxxxx xxxx  x: xxxxx xxx  │", 93),
+  panelRow("     `xxxx-xxx.xx`, `xxxxxx.xx`, `xxxx-xxxxxxx.xx`, `xx-xx.xx`, `xxxxxxxxxxx.xx`,", "│╰───────────────────────────────────────────╯", 93),
+  panelRow("     `xxxxxx-xxxxxxx.xx` xxx `xxxxxx.xx`, xxx xxx xxxxxxxxxxx xxx xxxxx `xxxxx/` xxx", "│xxxxxx · x xxxxxxx · x xxxxx       x-x xxxxxx", 93),
+  panelRow("     `xxxxxxxxx/`.", "│+x xxxxxxx", 93),
+  panelRow("", "│✓ x: xxxx:xxxxxx-x… ━━━·············· xx:xx", 93),
+  panelRow("     ## xxxx xx xx", "│✓ x: xxxx:xxxxxx    ━━··············· xx:xx", 93),
+  panelRow("", "│✓ x: xxxxxxx:xxxxx… ━━━━━━··········· xx:xx", 93),
+  panelRow("     x. **xxxxxx xxxxxx xxxx:**", "│✓ x: xxxxxxx:xxxxx… ····━━━━········· xx:xx", 93),
+  panelRow("        - xxxxx xxx xxxxxx xxxxxx: xxxx xxx xxxxx xxxx-xxxx, xxxxx xxx xxx, xx xx xxxxx;", "│✓ x: xxxxxxx:xxxx   ·····━━━········· xx:xx", 93),
+  panelRow("        - xxxx xxxxxxxxx xxxxxx xxx xx xxxxxxxx xxx xxx xxxxxxxx;", "│✓ x: xxxxxxx:xx-xx  ·····━━━········· xx:xx", 93),
+  panelRow("        - xxxx xxx xxxxxxxxx.", "│╭───────────────────────────────────────────╮", 93),
+  panelRow("     x. **xxxxx xxx xxxxxx** xx", "││ ✓ xxxx xxxx xxx · x xxxxxx · x … · +$x.xx │", 93),
+  panelRow("     `xxxx/xxxxxxxxxxx/xxxxxx/xxxx-xx-xx-xxxxxxxxxx-xxxxxxxxxx-xxxxxx.xx`. xx xxxx xx xxxx'x", "│╰───────────────────────────────────────────╯", 93),
+  panelRow("     xxxxxxxx xxxxx xxxx x xxxx xxxxx, xxxx xxx xxxx xxxxxxx (xx, xx, xx, xx, xx, x, x) xxxx", "│", 93),
+  panelRow("     xxx xxxxxxxxx, xxx xxxxxxxx xxxxxx xxxxxxxxxx xx x xxxxxxx xxxxx xx xxx xxxxx xxxxxxx", "│╭───────────────────────────────────────────╮", 93),
+  panelRow("     xxx xxx xx.", "││ xxxxxxx xxx                               │", 93),
+  panelRow("     x. **xxxx xxxx:** xxx xxxxxx xxxxx xxxxxxxxx xx xxxx xx, x xxxxx xxxxx xxx xxxxx, xxx", "││ xx:xx:xx xxxxxxx:xxxx xxxx → xxxxxx/xxxx… │", 93),
+  panelRow("     xxxx xx xxxxx xxxx-xx xxx xxx xxxx xx xxx xxxxxxx. x'x xxxxxxx xxxx-xx xxxxx xxx'xx xxxx", "││ xx:xx:xx xxxxxxx:xxxx xxxx → xxxxxx/xxxx… │", 93),
+  panelRow("     xxx xxxxxx.", "││ xx:xx:xx xxxxxxx:xxxx xxxx → xxxxxx/xxxx… │", 93),
+  panelRow("     /upgrade or /usage-credits to finish what you’re working on.", "││ xx:xx:xx xxxxxxx:xx-xxxxxx · xxxxxx       │", 93),
+  panelRow("", "││ xx:xx:xx xxxxxxx:xxxx xxxx · xxxxxx       │", 93),
+  panelRow("✻ Worked for 1h 16m 42s · done 10:53 PM", "││ xx:xx:xx xxxxxx       xxxx xxxxxxxxxxxx   │", 93),
+  panelRow("                                                     new task? /clear to save 149.9k tokens", "│", 93),
+  "─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ultracode ─",
+  "❯",
+  "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "  [xxxx x.x ◕ xxxxxxxxx(xxxxx)] │ xxxxxxxxxx xxx:(xxxx) │ ⏱️   xxx xxx │ xxxx $xxx.xx",
+  "  xxxxxxx ██░░░░░░░░ xx% │ xxxxx xxxxxx █████████░ xx% (xxxxxx xx xxx)",
+  "  x xxxxxx.xx | x xxxx | xx xxxxx",
+  "  ⏵⏵ xxxxxx xxxxxxxxxxx xx (xxxxx+xxx xx xxxxx) · ← x xxxxx",
+];
+
+const panelWithChat = (screen, chat) => {
+  const top = screen.indexOf('❯') - 1;
+  const column = [...screen[top - 1]].indexOf('│');
+  return screen.map((row, i) => i >= top - chat.length && i < top
+    ? panelRow(chat[i - (top - chat.length)].trimEnd(), [...row].slice(column).join(''), column)
+    : row);
+};
+const PANEL_GOAL_CHAT = CLAUDE_GOAL_LIMIT_REVIEW.slice(4, 10).map(row => row.includes('new task?') ? row.trim() : row);
+const PANEL_PLAIN_CHAT = PANEL_GOAL_CHAT.filter(row => !row.startsWith('⏺ Goal paused'))
+  .map(row => row.includes('new task?') ? 'new task? /clear to save 159.1k tokens' : row);
+const PANEL_NOW = new Date('2026-11-08T03:56:00Z');
+
+for (const [name, tail] of [
+  ['95-column goal', panelWithChat(CLAUDE_PANEL_95, PANEL_GOAL_CHAT)],
+  ['93-column labelled goal', panelWithChat(CLAUDE_PANEL_93, PANEL_GOAL_CHAT)],
+  ['95-column non-goal', panelWithChat(CLAUDE_PANEL_95, PANEL_PLAIN_CHAT)],
+  ['95-column update notice', panelWithChat(CLAUDE_PANEL_95,
+    [...PANEL_GOAL_CHAT, '✔ Update installed · Restart to update'])],
+  ['labelled box without panel', [...PANEL_GOAL_CHAT, ...CLAUDE_PANEL_93.slice(45)]],
+]) {
+  test(`DOG-78: ${name} keeps the banner reset instant`, () => {
+    const raw = tail.slice();
+    const banner = detectBanner(tail, 'claude', PANEL_NOW);
+    assert.equal(banner?.kind, 'limit');
+    assert.equal(newEvent({ handle: 'term_dog78', platform: 'claude', banner }, PANEL_NOW).resetAt,
+      '2026-11-08T05:20:00.000Z');
+    assert.deepEqual(tail, raw, 'detection must not mutate the raw capture');
+  });
+}
+
+test('DOG-78: panel outage retains the outage hold and near-miss classification', () => {
+  const tail = panelWithChat(CLAUDE_PANEL_95, CLAUDE_ERROR_BLOCK);
+  const banner = detectBanner(tail, 'claude', PANEL_NOW);
+  assert.equal(banner?.kind, 'outage');
+  assert.equal(newEvent({ handle: 'term_dog78', platform: 'claude', banner }, PANEL_NOW).resetAt,
+    '2026-11-08T04:06:00.000Z');
+  assert.equal(watchdog.classifyOutageNearMiss(tail, 'claude'), null);
+});
+
+for (const [name, tail] of [['95-column', CLAUDE_PANEL_95], ['93-column', CLAUDE_PANEL_93]]) {
+  test(`DOG-78 guard: ${name} real agent prose is not a stalled banner`, () => {
+    for (const now of [PANEL_NOW, new Date('2026-11-08T06:00:00Z')]) {
+      assert.equal(detectBanner(tail, 'claude', now), null);
+    }
+  });
+}
+
+test('DOG-78 guard: panel text is never banner evidence', () => {
+  const tail = panelWithChat(CLAUDE_PANEL_95,
+    ['⏺ Finished the work.', '  The report is ready.', '✻ Baked for 7s · done 11:12 PM', ''])
+    .map((row, i) => i < 44 ? panelRow([...row].slice(0, 95).join(''), '││', 95) : row);
+  tail[43] = panelRow('', '││ usage limit reached · resets 12:20am (America/New_York)', 95);
+  assert.equal(detectBanner(tail, 'claude', PANEL_NOW), null);
+});
+
+test('DOG-78: panel-only outage text is not a near miss', () => {
+  const tail = panelWithChat(CLAUDE_PANEL_95, ['⏺ Finished the work.', '']);
+  tail[43] = panelRow('', '││ API Error: 529 overloaded_error', 95);
+  assert.equal(watchdog.classifyOutageNearMiss(tail, 'claude'), null);
+});
+
+test('DOG-78: panel structure above the detection window still identifies the panel', () => {
+  const screen = CLAUDE_PANEL_95.map((row, i) => i < 44
+    ? panelRow([...row].slice(0, 95).join(''), i === 0 ? '│╭──╮' : '│', 95) : row);
+  const banner = detectBanner(panelWithChat(screen, PANEL_GOAL_CHAT), 'claude', PANEL_NOW);
+  assert.equal(banner?.kind, 'limit');
+  assert.equal(newEvent({ handle: 'term_dog78', platform: 'claude', banner }, PANEL_NOW).resetAt,
+    '2026-11-08T05:20:00.000Z');
+  assert.equal(watchdog.classifyOutageNearMiss(panelWithChat(screen, CLAUDE_ERROR_BLOCK), 'claude'), null);
+});
+
+test('DOG-78 guard: new output below a panel limit makes it stale', () => {
+  const tail = panelWithChat(CLAUDE_PANEL_95, [...PANEL_GOAL_CHAT, '⏺ Continuing the work.']);
+  assert.equal(detectBanner(tail, 'claude', PANEL_NOW), null);
+});
+
+test('DOG-78: stripSidePanel cuts only the exact panel run, preserving raw input', () => {
+  for (const [tail, column, top] of [[CLAUDE_PANEL_95, 95, 44], [CLAUDE_PANEL_93, 93, 45]]) {
+    const raw = tail.slice();
+    const expected = tail.map((row, i) => i < top ? [...row].slice(0, column).join('') : row);
+    assert.deepEqual(watchdog.stripSidePanel(tail), expected);
+    assert.deepEqual(tail, raw);
+    assert.deepEqual(watchdog.stripSidePanel(['Earlier output.', ...tail]), ['Earlier output.', ...expected]);
+  }
+});
+
+test('DOG-78 guard: stripSidePanel leaves existing non-panel Claude fixtures unchanged', () => {
+  for (const tail of [CLAUDE_BANNER, CLAUDE_CONTINUATIONS, CLAUDE_WRAP_CONTINUATIONS,
+    CLAUDE_FAKE_FOOTER, CLAUDE_500_CAPTURE, CLAUDE_529_CAPTURE, CLAUDE_WIDE_OPUS_CAPTURE,
+    CLAUDE_DOG50_WIDE_BOX, CLAUDE_DOG50_NARROW_BOX, CLAUDE_SESSION_LIMIT_WIDE,
+    CLAUDE_SESSION_LIMIT_NARROW, CLAUDE_ERROR_BLOCK, CLAUDE_NARROW_FABLE_BOX,
+    CLAUDE_500_STALLED, CLAUDE_GOAL_LIMIT_REVIEW, CLAUDE_GOAL_LIMIT_FALLBACK,
+    CLAUDE_LIMIT_WITHOUT_GOAL, CLAUDE_LIMIT_WITHOUT_GOAL_RESET,
+    CREDITS_TAIL, CREDITS_NARROW_LINES, DOG69_CLAUDE_HISTORY, DOG69_CLAUDE_DRAFT]) {
+    assert.deepEqual(watchdog.stripSidePanel(tail), tail);
+  }
+});
+
+test('DOG-78 guard: stripSidePanel requires a box, eight rows and a nested border', () => {
+  const noBox = CLAUDE_PANEL_95.slice(0, 44);
+  const short = [...CLAUDE_PANEL_95.slice(37, 44), ...CLAUDE_PANEL_95.slice(44)];
+  const table = [...Array.from({ length: 12 }, () => panelRow('A table cell', '│ another cell', 95)),
+    ...CLAUDE_PANEL_95.slice(44)];
+  for (const tail of [noBox, short, table]) assert.deepEqual(watchdog.stripSidePanel(tail), tail);
+  // Exactly eight rows is sufficient when a nested border is present.
+  const eight = [...Array.from({ length: 8 }, (_, i) => panelRow('', i === 0 ? '│╭──╮' : '│', 95)),
+    ...CLAUDE_PANEL_95.slice(44)];
+  assert.deepEqual(watchdog.stripSidePanel(eight), [...Array(8).fill(' '.repeat(95)),
+    ...CLAUDE_PANEL_95.slice(44)]);
+});
+
+test('DOG-78 guard: seven-row suffix is preserved and eight-row suffix is cut', () => {
+  for (const length of [7, 8]) {
+    const prefix = ['Earlier output.', ''];
+    const run = Array.from({ length }, (_, i) => panelRow('', i === 0 ? '│╭──╮' : '│', 95));
+    const footer = CLAUDE_PANEL_95.slice(44);
+    const tail = [...prefix, ...run, ...footer];
+    assert.deepEqual(watchdog.stripSidePanel(tail), length === 7 ? tail
+      : [...prefix, ...Array(8).fill(' '.repeat(95)), ...footer]);
+  }
+});
+
+for (const [name, column, rows] of [
+  ['column-0 box', 0, ['│╭────────╮│', ...Array(7).fill('││ chat   ││'), '│╰────────╯│']],
+  ['column-2 box', 2, ['│╭────────╮│', ...Array(7).fill('││ chat   ││'), '│╰────────╯│']],
+  ['column-0 tree', 0, Array.from({ length: 9 }, (_, i) => i % 2 ? '││  └── leaf' : '│├── node')],
+]) {
+  test(`DOG-78: ${name} stays intact and cannot revive an older limit`, () => {
+    const tail = ['⏺ Claude usage limit reached ∙ resets 5am', '',
+      ...rows.map(row => ' '.repeat(column) + row), '──────────', '❯', '──────────', 'Status'];
+    assert.equal(detectBanner(tail, 'claude', PANEL_NOW), null);
+    assert.deepEqual(watchdog.stripSidePanel(tail), tail);
+  });
+}
+
+test('DOG-78: minimum panel column preserves 39 and cuts 40', () => {
+  for (const column of [39, 40]) {
+    const run = Array.from({ length: 8 }, (_, i) => panelRow('', i === 0 ? '│╭──╮' : '│', column));
+    const footer = CLAUDE_PANEL_95.slice(44);
+    const tail = [...run, ...footer];
+    assert.deepEqual(watchdog.stripSidePanel(tail), column === 39 ? tail
+      : [...Array(8).fill(' '.repeat(40)), ...footer]);
+  }
+});
+
+test('DOG-78: double-width text is cut only at an exact, consistent code-point column', () => {
+  for (const text of ['😀 done', '界 done']) {
+    const aligned = CLAUDE_PANEL_95.slice();
+    aligned[20] = panelRow(text, '││ panel │', 95);
+    assert.deepEqual(watchdog.stripSidePanel(aligned), aligned.map((row, i) =>
+      i < 44 ? [...row].slice(0, 95).join('') : row));
+    // A terminal compensating for display width shifts the border one code point.
+    // Even with >8 aligned rows below it, keep the WHOLE read instead of guessing.
+    for (const index of [20, 42, 43]) {
+      const shifted = CLAUDE_PANEL_95.slice();
+      shifted[index] = panelRow(text, '││ panel │', 94);
+      assert.deepEqual(watchdog.stripSidePanel(shifted), shifted);
+    }
+  }
+});
+
+test('DOG-78: labelled rules stay short, single-token and anchored', () => {
+  const rule = watchdog.PROVIDERS.find(provider => provider.id === 'claude').chrome.footerStart.rule;
+  for (const row of ['── ultracode ─', '── label ──', '────']) assert.equal(rule.test(row), true);
+  for (const row of ['── two labels ──', '── ' + 'x'.repeat(33) + ' ──',
+    'prose ── label ──', '── label ── prose', '── a─b ──']) assert.equal(rule.test(row), false);
+});
+
 test('DOG-52: existing Claude, Codex, and Gemini limit fixtures keep their reset instants', () => {
   const fixtures = [
     ['Claude classic', CLAUDE_BANNER, 'claude', new Date('2026-09-22T01:55:00Z'), '2026-09-22T07:00:00.000Z'],
