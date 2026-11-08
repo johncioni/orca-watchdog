@@ -1,7 +1,8 @@
 # Console credit overflow: design
 
-Date: 2026-11-08. Status: approved by John 2026-11-08 (DOG-81). Lines marked "our
-call" are the author's decisions, not John's.
+Date: 2026-11-08. Status: approved by John 2026-11-08 (DOG-81); revised
+after spec review round 1 (`efa94bd`). Lines marked "our call" are the
+author's decisions, not John's.
 
 ## Intent
 
@@ -193,7 +194,8 @@ the reset. Spending the whole credit is fine; it is otherwise wasted.
   hold; `--dry-run` writes no request, state or capture.
 - **Switch to Console:** for an eligible Max-mode terminal showing the
   limit banner that passes the gate: persist the request (wrapper pid,
-  generation, session ID from the pid file, target mode, attempt count),
+  generation, session ID from the pid file, target mode, attempt count,
+  send time),
   then send `/exit` and Enter. Switches are spaced (Wrapper, "Admission").
   The wrapper's initial message is the resume, so the watchdog sends
   nothing more.
@@ -224,9 +226,13 @@ the reset. Spending the whole credit is fine; it is otherwise wasted.
 - **Console-mode terminals: one owner at a time.** A terminal with a
   pending request belongs to the controller alone. Otherwise, retryable
   stalls in a Console-mode terminal (an API outage, overload or connection
-  error, or a Console 429 rate limit; texts from the spike) keep the
+  error, or a Console 429 rate limit; texts from the spike) get the
   ordinary outage path's bounded, provider-status-gated resumes, so a
   short outage or a 429 does not stall the session until the Max reset.
+  Today's Claude outage rows have no 429 form, so the Console 429 is a new
+  pattern, applied only in Console-mode registered terminals; like any new
+  outage row it also stales limits, so recorded screens are replayed
+  against it (decisions.md, 2026-09-23).
   Only permanent billing exhaustion (below) waits for switch-back. A
   claude.ai limit or credits banner never starts an ordinary send in a
   Console-mode terminal.
