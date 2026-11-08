@@ -342,6 +342,10 @@ const footerStartFor = (platform, window) => {
 const isTrailingChromeAt = (platform, window, index, footerStart) =>
   (footerStart >= 0 && index >= footerStart - 2) || isTrailingChromeFor(platform, window[index]);
 
+// Real panels sit at columns 93/95; a chat column under 40 code points is not
+// a usable Claude layout and may instead be a chat-side box or tree.
+const MIN_PANEL_COLUMN = 40;
+
 // Flightdeck is geometry, not panel words. Eight consecutive rows gives both
 // captured 44/45-row panels ample margin while rejecting short incidental boxes.
 // Use code-point columns, never guessed display widths: emoji/CJK are safe when
@@ -354,7 +358,7 @@ export function stripSidePanel(lines) {
   if (top < 8) return lines;
   const rows = plain.slice(0, top).map((line) => [...line]);
   const column = rows[top - 1].indexOf('│');
-  if (column < 0) return lines;
+  if (column < MIN_PANEL_COLUMN) return lines;
   let start = top;
   let nested = false;
   while (start > 0 && rows[start - 1].indexOf('│') === column) {

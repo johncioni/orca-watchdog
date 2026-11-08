@@ -649,10 +649,9 @@ for (const [name, tail] of [['95-column', CLAUDE_PANEL_95], ['93-column', CLAUDE
 
 test('DOG-78 guard: panel text is never banner evidence', () => {
   const tail = panelWithChat(CLAUDE_PANEL_95,
-    ['⏺ Finished the work.', '  The report is ready.', '✻ Baked for 7s · done 11:12 PM', '']);
-  tail[42] = panelRow('✻ Baked for 7s · done 11:12 PM',
-    '││ usage limit reached · resets 12:20am (America/New_York)', 95);
-  tail[43] = panelRow('', '││ API Error: 529 overloaded_error', 95);
+    ['⏺ Finished the work.', '  The report is ready.', '✻ Baked for 7s · done 11:12 PM', ''])
+    .map((row, i) => i < 44 ? panelRow([...row].slice(0, 95).join(''), '││', 95) : row);
+  tail[43] = panelRow('', '││ usage limit reached · resets 12:20am (America/New_York)', 95);
   assert.equal(detectBanner(tail, 'claude', PANEL_NOW), null);
 });
 
@@ -710,6 +709,40 @@ test('DOG-78 guard: stripSidePanel requires a box, eight rows and a nested borde
     ...CLAUDE_PANEL_95.slice(44)];
   assert.deepEqual(watchdog.stripSidePanel(eight), [...Array(8).fill(' '.repeat(95)),
     ...CLAUDE_PANEL_95.slice(44)]);
+});
+
+test('DOG-78 guard: seven-row suffix is preserved and eight-row suffix is cut', () => {
+  for (const length of [7, 8]) {
+    const prefix = ['Earlier output.', ''];
+    const run = Array.from({ length }, (_, i) => panelRow('', i === 0 ? '│╭──╮' : '│', 95));
+    const footer = CLAUDE_PANEL_95.slice(44);
+    const tail = [...prefix, ...run, ...footer];
+    assert.deepEqual(watchdog.stripSidePanel(tail), length === 7 ? tail
+      : [...prefix, ...Array(8).fill(' '.repeat(95)), ...footer]);
+  }
+});
+
+for (const [name, column, rows] of [
+  ['column-0 box', 0, ['│╭────────╮│', ...Array(7).fill('││ chat   ││'), '│╰────────╯│']],
+  ['column-2 box', 2, ['│╭────────╮│', ...Array(7).fill('││ chat   ││'), '│╰────────╯│']],
+  ['column-0 tree', 0, Array.from({ length: 9 }, (_, i) => i % 2 ? '││  └── leaf' : '│├── node')],
+]) {
+  test(`DOG-78: ${name} stays intact and cannot revive an older limit`, () => {
+    const tail = ['⏺ Claude usage limit reached ∙ resets 5am', '',
+      ...rows.map(row => ' '.repeat(column) + row), '──────────', '❯', '──────────', 'Status'];
+    assert.equal(detectBanner(tail, 'claude', PANEL_NOW), null);
+    assert.deepEqual(watchdog.stripSidePanel(tail), tail);
+  });
+}
+
+test('DOG-78: minimum panel column preserves 39 and cuts 40', () => {
+  for (const column of [39, 40]) {
+    const run = Array.from({ length: 8 }, (_, i) => panelRow('', i === 0 ? '│╭──╮' : '│', column));
+    const footer = CLAUDE_PANEL_95.slice(44);
+    const tail = [...run, ...footer];
+    assert.deepEqual(watchdog.stripSidePanel(tail), column === 39 ? tail
+      : [...Array(8).fill(' '.repeat(40)), ...footer]);
+  }
 });
 
 test('DOG-78: double-width text is cut only at an exact, consistent code-point column', () => {
