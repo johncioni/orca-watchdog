@@ -16,7 +16,8 @@ ready for 14 days, or sooner when one matters to work about to start. Tasks
 with durable material go into one memory PR that touches only this
 directory; a task with nothing durable is retired in the queue's
 `retired.log` without a PR. Policy, sandbox and harness material goes to
-orca-ops' `docs/policy-memory/` instead. The repo's
+the policy repo's `docs/policy-memory/` instead (`~/.agents/MODELS.md`,
+"Policy memory", names it). The repo's
 `.github/review-invariants.txt` must list this directory, so that PR never
 skips review; the spec/plan reviewer reviews it at high. Task PRs carry no
 memory edits. Implementers never edit this directory; they list durable
