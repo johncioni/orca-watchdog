@@ -187,8 +187,9 @@ export const PROVIDERS = defineProviders([
         /^new task\? \/clear to save \d+(?:\.\d+)?k tokens(?: · ◎ \/goal active \([^)]+\))?$/,
         /^◎ \/goal active \([^)]+\)$/,
         /^\/upgrade or \/usage-credits to finish what you[’']re working on\.$/,
+        /^✔ Update installed · Restart to update$/,
       ],
-      footerStart: { prompt: /^❯$/, rule: /^─+$/ },
+      footerStart: { prompt: /^❯$/, rule: /^─+(?: [^\s─]{1,32} ─+)?$/ },
     },
     status: { kind: 'statuspage', url: 'https://status.claude.com/api/v2/status.json' },
   },
@@ -330,8 +331,8 @@ const isTrailingChromeFor = (platform, l) =>
 const lastIndex = (arr, pred) => { let i = -1; arr.forEach((x, j) => { if (pred(x, j)) i = j; }); return i; };
 // Claude's footer content changes with model, width, and plugins. The stable
 // boundary is its closed input box: opening rule, bare prompt, closing rule.
-// Once that structure exists, the prompt and everything from the closing rule
-// down are UI chrome; ordinary agent output remains above the box.
+// Once that structure exists, the opening rule and everything below it are UI
+// chrome (including a labelled rule); ordinary agent output remains above it.
 const footerStartFor = (platform, window) => {
   const marker = providerFor(platform)?.chrome?.footerStart;
   if (marker === null || marker === undefined) return -1;
@@ -339,7 +340,30 @@ const footerStartFor = (platform, window) => {
     && marker.prompt.test(window[i - 1] ?? '') && marker.rule.test(window[i - 2] ?? ''));
 };
 const isTrailingChromeAt = (platform, window, index, footerStart) =>
-  (footerStart >= 0 && index >= footerStart - 1) || isTrailingChromeFor(platform, window[index]);
+  (footerStart >= 0 && index >= footerStart - 2) || isTrailingChromeFor(platform, window[index]);
+
+// Flightdeck is geometry, not panel words. Eight consecutive rows gives both
+// captured 44/45-row panels ample margin while rejecting short incidental boxes.
+// Use code-point columns, never guessed display widths: emoji/CJK are safe when
+// the leftmost border stays aligned (a chat-side │ is conservatively rejected).
+// If a bordered row breaks alignment, reject the whole read rather than strip
+// a suffix below a shifted border or cut real chat text.
+export function stripSidePanel(lines) {
+  const plain = lines.map(stripAnsi);
+  const top = footerStartFor('claude', plain.map((line) => line.trim())) - 2;
+  if (top < 8) return lines;
+  const rows = plain.slice(0, top).map((line) => [...line]);
+  const column = rows[top - 1].indexOf('│');
+  if (column < 0) return lines;
+  let start = top;
+  let nested = false;
+  while (start > 0 && rows[start - 1].indexOf('│') === column) {
+    start--;
+    if (['╭', '╰', '│'].includes(rows[start][column + 1])) nested = true;
+  }
+  if (top - start < 8 || !nested || (start > 0 && rows[start - 1].includes('│'))) return lines;
+  return lines.map((line, i) => i >= start && i < top ? rows[i].slice(0, column).join('') : line);
+}
 
 export function shouldLog(level, env = process.env) {
   return level !== 'debug' || Boolean(env.WATCHDOG_DEBUG);
@@ -444,6 +468,7 @@ export function hasOutageLine(lines) {
 }
 
 export function classifyOutageNearMiss(lines, platform = 'unknown') {
+  lines = stripSidePanel(lines);
   const sourceWindow = lines.slice(-TAIL_LINES).map((line) => stripAnsi(line).slice(0, WINDOW_LINE_MAX));
   const window = toWindow(lines);
   const result = scanOutage(sourceWindow, window, platform, footerStartFor(platform, window));
@@ -466,6 +491,7 @@ const CODEX_LIMIT_FORMS = [
 ];
 
 export function detectBanner(lines, platform = 'unknown', now = new Date()) {
+  lines = stripSidePanel(lines);
   const sourceWindow = lines.slice(-TAIL_LINES).map((l) => stripAnsi(l).slice(0, WINDOW_LINE_MAX));
   const window = toWindow(lines);
   const platformFooterStart = footerStartFor(platform, window);
