@@ -13,7 +13,7 @@ import { runObservedCheck, atomicWriteFile, readRegularSync } from './lib/operat
 import { appendActivity, maintainLogs } from './lib/logs.mjs';
 import { VERSION } from './version.mjs';
 import * as overflowState from './lib/overflow-state.mjs';
-import { planOverflow } from './lib/overflow.mjs';
+import { planOverflow, SWITCH_SEND_TIMEOUT_MS } from './lib/overflow.mjs';
 
 export const RESUME_TEXT = 'Session rate limit has reset. Resume where you left off.';
 
@@ -1174,11 +1174,11 @@ function log(level, msg) {
   catch { /* diagnostic IO must not affect sends */ }
 }
 
-export async function orca(args, execImpl = pExecFile) {
+export async function orca(args, execImpl = pExecFile, timeoutMs = 15_000) {
   let stdout;
   const startedAt = performance.now();
   try {
-    ({ stdout } = await execImpl(ORCA, [...args, '--json'], { timeout: 15_000 }));
+    ({ stdout } = await execImpl(ORCA, [...args, '--json'], { timeout: timeoutMs }));
   } catch (e) {
     // orca exits non-zero for structured errors but still prints JSON to stdout
     if (!e.stdout) { e.elapsedMs = performance.now() - startedAt; throw e; }
@@ -1382,6 +1382,13 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
     plan = planOverflow({ ...input, mode: context.mode });
   }
   for (const handle of held) plan.suppress.set(handle, 'all');
+  if (!dryRun) for (const { handle, status } of plan.idleHolds) {
+    const ev = events[handle];
+    if (ev?.kind !== 'limit' || ev.overflowIdleLogged) continue;
+    ev.overflowIdleLogged = true;
+    deps.saveState(events);
+    log('info', `overflow hold ${handle}: pid-file status ${status ?? 'missing'}; waiting for idle`);
+  }
   for (let i = sendCandidates.length - 1; i >= 0; i--) {
     const ev = events[sendCandidates[i]], suppression = plan.suppress.get(ev?.handle);
     if (!ev || suppression === 'all' || (suppression === 'limit-credits' && ['limit', 'credits'].includes(ev.kind))) sendCandidates.splice(i, 1);
@@ -1478,7 +1485,7 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
       let sent = false;
       try {
         if (!deps.isDisabled()) {
-          await deps.orca(['terminal', 'send', '--terminal', handle, '--text', '/exit', '--enter']);
+          await deps.orca(['terminal', 'send', '--terminal', handle, '--text', '/exit', '--enter'], undefined, SWITCH_SEND_TIMEOUT_MS);
           sent = true; log('info', `switching ${handle} to ${to} (attempt ${next.attempts})`);
         }
       } catch (e) { log('warn', `overflow send failed for ${handle}: ${describeOrcaError(e)}`); }

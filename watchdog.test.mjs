@@ -4991,7 +4991,7 @@ test('DOG-72: pre-send replacement captures the new kind without sending', async
 });
 
 // Source-derived Claude 2.1.319 Console wording; unverified live.
-test('Console 429 row is opt-in for detection, near misses and stale-limit arbitration', () => {
+test('Console 429 row is opt-in for detection, near misses and limit/outage arbitration', () => {
   const lines = ['⎿ API Error: Request rejected (429) · this may be a temporary capacity issue.', '────────────', '❯', '────────────'];
   assert.equal(watchdog.detectBanner(lines, 'claude', NOW), null);
   assert.equal(watchdog.detectBanner(lines, 'claude', NOW, { consoleRows: true })?.kind, 'outage');
@@ -5003,4 +5003,9 @@ test('Console 429 row is opt-in for detection, near misses and stale-limit arbit
   const combined = [CLAUDE_BANNER[1], ...lines];
   assert.equal(watchdog.detectBanner(combined, 'claude', NOW, { consoleRows: true })?.kind, 'outage');
   assert.equal(watchdog.detectBanner(lines, 'unknown', NOW, { consoleRows: true }), null);
+});
+test('Console 429 payload with a nonmatching envelope stales a limit only with consoleRows', () => {
+  const lines = [CLAUDE_BANNER[1], '⎿ Tip: API Error: Request rejected (429) · capacity', '────────────', '❯', '────────────'];
+  assert.equal(watchdog.detectBanner(lines, 'claude', NOW, { consoleRows: false })?.kind, 'limit');
+  assert.equal(watchdog.detectBanner(lines, 'claude', NOW, { consoleRows: true }), null);
 });
