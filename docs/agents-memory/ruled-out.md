@@ -2,6 +2,14 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-11-09: Telling a billing line's age or extent by launch time, fingerprint, indent or token
+
+Marks scoped to launches after the last clear missed sessions already running at the clear, and
+screen lines carry no identity to fingerprint (`/resume` repaints them). Rules written from a trimmed
+quote (column-0 `⎿`, one line, a bare goal notice) matched no real Claude screen. Continuation by
+indentation swallowed a later retry or 429; by whitespace-free token, a later `Done.`.
+PR: https://github.com/johncioni/orca-watchdog/pull/131, https://github.com/johncioni/orca-watchdog/pull/132
+
 ## 2026-11-08: Interactive Console sessions on the promotional credit
 
 The spike found the server bills that credit for SDK-tagged requests (`claude -p`) and refuses every
@@ -47,20 +55,13 @@ also provider-agnostic, so Phase 5 of DOG-35 could only ever notify, never resum
 only if one runs real work here; the design is in the multi-agent plan, "Degraded mode (Tier-2)".
 PR: https://github.com/johncioni/orca-watchdog/pull/68
 
-## 2026-09-23: An exclusive fallback boundary at the marker line
+## 2026-09-23: A strict banner block, or a fallback boundary that excludes the marker line
 
-Treating the marker line as outside the older banner dropped a banner whose reached
-line starts with `⏺`. The split banner then fell to the 60-minute default and sent
-three resumes before the real reset. The marker line now belongs to the older banner.
-PR: https://github.com/johncioni/orca-watchdog/pull/60
-
-## 2026-09-22: A strict banner block with no fallback
-
-Taking the reset only from the last consecutive block lost it when a blank or tip
-line split a banner: the 60-minute default sent three resumes before the real reset,
-then gave up. Widening to the last reached line alone fails the mirror case. The
-block with a no-clock fallback matches 1.2.5 on every probed shape.
-PR: https://github.com/johncioni/orca-watchdog/pull/58
+Taking the reset only from the last consecutive block lost it when a blank or tip line split a banner;
+treating the marker line as outside the older banner dropped a reached line starting with `⏺`. Each
+fell to the 60-minute default and sent three resumes before the real reset. Widening to the last reached
+line alone fails the mirror case; the block with a no-clock fallback matches 1.2.5 on every probed shape.
+PR: https://github.com/johncioni/orca-watchdog/pull/58, https://github.com/johncioni/orca-watchdog/pull/60
 
 ## 2026-09-22: Deleting an event on one missing or short confirmation of its handle
 
