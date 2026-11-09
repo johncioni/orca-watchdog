@@ -14,7 +14,7 @@ const self = fileURLToPath(import.meta.url);
 const fake = fileURLToPath(new URL('./e2e/fake-claude.mjs', import.meta.url));
 const start = Date.parse('2026-11-08T12:00:00Z');
 if (process.env.OVERFLOW_WRAPPER_WORKER) {
-  let now = start, child, interval, sleeping, observeRequestLock = false;
+  let now = start, child, interval, sleeping, observeRequestLock = false, failRegistrationWrite = false;
   const spawnProcess = childProcess.spawn;
   mock.method(childProcess, 'spawn', (command, argv, options) => {
     if (command === '/usr/bin/lockf') {
@@ -34,11 +34,20 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     }
     return spawnProcess(command, argv, options);
   });
+  const rename = fs.renameSync;
+  mock.method(fs, 'renameSync', (from, to) => {
+    if (failRegistrationWrite && to === path.join(state.overflowPaths(process.env.HOME).registrationsDir, 'pane', `${process.pid}.json`)) {
+      failRegistrationWrite = false;
+      throw Object.assign(new Error('injected registration write failure'), { code: 'EIO' });
+    }
+    return rename(from, to);
+  });
   syncBuiltinESMExports();
   process.on('message', async m => {
     if (m.type === 'child') child.send(m.command);
     if (m.type === 'clock') {
       now = m.now;
+      failRegistrationWrite = m.failRegistrationWrite ?? false;
       observeRequestLock = m.observeRequestLock ?? false;
       if (interval) await interval();
       const wake = sleeping; sleeping = null; wake?.();
@@ -111,7 +120,7 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     opts.cleanups.push(async () => { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await exited; } });
     return { child, next, exited, stderr: () => stderr,
       command: command => child.send({ type: 'child', command }),
-      clock: async (now, observeRequestLock = false) => { child.send({ type: 'clock', now, observeRequestLock }); await next('clocked'); } };
+      clock: async (now, observeRequestLock = false, failRegistrationWrite = false) => { child.send({ type: 'clock', now, observeRequestLock, failRegistrationWrite }); await next('clocked'); } };
   }
   async function finish(w, code = 0, remove = true) {
     w.command({ type: 'exit', code, remove });
@@ -176,7 +185,9 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     const b = launch(t, opts, ['second']); await b.next('ready');
     assert.equal(state.readRegistrations(opts).length, 1);
     assert.deepEqual(logs(opts)[1].argv, ['second']);
-    await finish(b); assert.equal(registration(opts).wrapperPid, a.child.pid); await finish(a);
+    await finish(b);
+    assert.match(b.stderr(), /claude-overflow: cannot claim terminal pane: another wrapper owns the handle or ownership is uncertain/);
+    assert.equal(registration(opts).wrapperPid, a.child.pid); await finish(a);
   });
   test('console request relaunches with exact Console dir, preserved tmpdir, no advisor and launch reason ok', async t => {
     const opts = fixture(t), keep = ['--model', 'opus', '--advisor', 'claude-fable-5-1', '--plugin-dir', '/plugin'];
@@ -203,6 +214,15 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     await consoleWindow(opts); await request(opts, { sessionId: 's2' });
     w.command({ type: 'exit', code: 0 }); await w.next('ready');
     assert.deepEqual(logs(opts)[1].argv.slice(-3), ['--resume', 's2', CONSOLE_MESSAGE]); await finish(w);
+  });
+  test('session registration retries after a failed write on the next poll', async t => {
+    const opts = fixture(t), w = launch(t, opts, ['--model', 'opus', '--session-id', 's1']); await w.next('ready');
+    w.command({ type: 'session', sessionId: 's2' }); await w.next('session');
+    await w.clock(start + 5000, false, true);
+    assert.equal(registration(opts).sessionId, 's1');
+    await w.clock(start + 10000);
+    assert.equal(registration(opts).sessionId, 's2');
+    await finish(w);
   });
   for (const changed of [false, true]) test(`session mismatch at exit leaves request pending and logs both IDs${changed ? ' after final pid read' : ''}`, async t => {
     const opts = fixture(t), w = launch(t, opts, ['--model', 'opus', '--session-id', 's1']); await w.next('ready');
@@ -278,7 +298,7 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     assert.equal(registration(opts).mode, 'max'); assert.equal(state.readRequest('pane', opts), null);
     assert.deepEqual(logs(opts)[0].argv, ['--model', 'opus', '--resume', 'direct']); await finish(w);
   });
-  test('successor registers and spawns only after the request lock is released', async t => {
+  test('successor registers and spawns only after the request lock is released', { timeout: 60_000 }, async t => {
     const opts = fixture(t), w = launch(t, opts); await w.next('ready'); await consoleWindow(opts);
     await state.takeAdmission(new Date(start), opts); await request(opts); w.command({ type: 'exit' }); await w.next('waiting');
     await state.withFlock(path.join(opts.paths.requestsDir, 'pane.lock'), async () => {
@@ -301,6 +321,20 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     assert.deepEqual(logs(opts)[2].argv.slice(-3), ['--resume', s, MAX_MESSAGE]);
     assert.equal(await finish(w, 2), 2); assert.equal(logs(opts).length, 3); assert.ok(w.stderr().includes(s));
     assert.equal(fs.readFileSync(path.join(opts.home, '.local/state/orca-watchdog/watchdog.log'), 'utf8').trim().split('\n').length, 1);
+  });
+  test('failed successor at SETTLE_MS - 1 falls back to generation 3 on Max', async t => {
+    const opts = fixture(t), w = launch(t, opts); await w.next('ready');
+    await consoleWindow(opts); await request(opts); w.command({ type: 'exit' }); await w.next('ready');
+    const entry = registration(opts);
+    assert.equal(entry.generation, 2);
+    await w.clock(Date.parse(entry.launchedAt) + state.SETTLE_MS - 1);
+    w.command({ type: 'exit', code: 1 });
+    const result = await w.next(['finished', 'ready']);
+    assert.equal(result.type, 'ready', 'an unsettled failure must launch generation 3');
+    assert.equal(registration(opts).generation, 3); assert.equal(registration(opts).mode, 'max');
+    assert.equal(logs(opts).length, 3);
+    assert.deepEqual(logs(opts)[2].argv.slice(-3), ['--resume', entry.sessionId, MAX_MESSAGE]);
+    await finish(w);
   });
   for (const offset of [0, 1]) test(`failed successor at SETTLE_MS + ${offset} exits without a fallback`, async t => {
     const opts = fixture(t), w = launch(t, opts); await w.next('ready');
@@ -334,6 +368,18 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     await w.next('ready');
     assert.deepEqual(logs(opts)[0].argv.slice(-2), ['--', '--advisor=fake prompt']);
     await finish(w);
+  });
+  test('symlinked mjs entry runs the wrapper with overflow disabled', t => {
+    const opts = fixture(t), entry = path.join(opts.home, 'wrapper.mjs');
+    fs.unlinkSync(opts.paths.enabledFile);
+    fs.symlinkSync(fileURLToPath(new URL('./bin/claude-overflow.mjs', import.meta.url)), entry);
+    const result = spawnSync(process.execPath, [entry, '--model', 'opus', 'hello'], { encoding: 'utf8', env: {
+      HOME: opts.home, PATH: process.env.PATH, ORCA_TERMINAL_HANDLE: 'pane', CLAUDE_OVERFLOW_CLAUDE: fake,
+      FAKE_CLAUDE_LOG: path.join(opts.home, 'launches.jsonl'), FAKE_CLAUDE_EXIT: '9',
+    } });
+    assert.equal(result.status, 9, result.stderr);
+    assert.deepEqual(logs(opts)[0].argv, ['--model', 'opus', 'hello']);
+    assert.deepEqual(state.readRegistrations(opts), []);
   });
   test('symlinked launcher skips its own PATH alias and fast path needs no wrapper Node', t => {
     const opts = fixture(t), first = path.join(opts.home, 'first'), second = path.join(opts.home, 'second');
@@ -397,8 +443,9 @@ ORCA_WATCHDOG_NODE='${process.execPath}' exec '${shim}' "$@"
     assert.equal(fs.readFileSync(path.join(opts.home, 'env-entries'), 'utf8'), 'entry\n');
     assert.equal(fs.existsSync(layout.env.FAKE_CLAUDE_LOG), false);
   });
-  for (const target of ['shim', 'alias', 'name']) test(`Node wrapper refuses an explicit ${target} that leads back to the shim`, t => {
+  for (const target of ['shim', 'alias', 'name', 'mjs']) test(`Node wrapper refuses an explicit ${target} that leads back to the shim`, t => {
     const opts = fixture(t), layout = brewLayout(opts);
+    layout.mjs = path.join(layout.root, 'bin/claude-overflow.mjs');
     const script = `import { runWrapper } from ${JSON.stringify(path.join(layout.root, 'bin/claude-overflow.mjs'))};
       process.exitCode = await runWrapper({ argv: ['hello'], deps: {
         spawn: () => { throw new Error('unexpected Claude spawn'); },

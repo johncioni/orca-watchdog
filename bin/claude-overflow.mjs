@@ -90,8 +90,8 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
     try {
       const value = JSON.parse(fs.readFileSync(path.join(entry.configDir, 'sessions', `${entry.claudePid}.json`), 'utf8'));
       if (typeof value.sessionId === 'string' && value.sessionId && value.sessionId !== entry.sessionId) {
+        updateRegistration({ ...entry, sessionId: value.sessionId }, opts);
         entry.sessionId = value.sessionId;
-        updateRegistration(entry, opts);
       }
     } catch { /* Claude removes its pid file before exit; retain the last observation. */ }
   }
@@ -211,4 +211,6 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await runWrapper();
+let entryPath;
+try { entryPath = process.argv[1] && fs.realpathSync(process.argv[1]); } catch { /* Missing entry paths do not invoke the wrapper. */ }
+if (entryPath === fileURLToPath(import.meta.url)) process.exitCode = await runWrapper();
