@@ -51,9 +51,15 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
       return originalRead(...args);
     });
     await messages('go');
-    const clock = Date.now();
-    const result = await syncConsoleProject(process.env.CONFIG_CWD, { home, now: () => clock,
-      sleep: async () => { process.send({ type: 'waiting' }); await messages('retry'); } });
+    const clock = Number(process.env.CONFIG_NOW) || Date.now();
+    let result;
+    for (;;) {
+      const options = { home, now: () => clock, timeoutS: 0 };
+      result = process.env.CONSOLE_CONFIG_WORKER === 'setup'
+        ? await setupConsoleDir(options) : await syncConsoleProject(process.env.CONFIG_CWD, options);
+      if (result.reason !== 'lock-timeout' || process.env.CONFIG_ONCE) break;
+      process.send({ type: 'waiting' }); await messages('retry');
+    }
     process.send({ type: 'done', result });
   }
   process.disconnect();
@@ -72,9 +78,9 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     write(path.join(dir, '.claude.json'), { oauthAccount: { account: 'console-only' }, userID: 'console-user', projects: {} });
     return { home, dir, max, cwd, file: path.join(dir, '.claude.json') };
   }
-  function worker(t, f, cwd, type = 'sync', hold = false) {
+  function worker(t, f, cwd, type = 'sync', hold = false, env = {}) {
     const child = fork(self, [], { env: { HOME: f.home, PATH: process.env.PATH, CONSOLE_CONFIG_WORKER: type,
-      CONFIG_CWD: cwd, ...(hold ? { HOLD_CONFIG_READ: '1' } : {}) }, execArgv: [], stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+      CONFIG_CWD: cwd, ...(hold ? { HOLD_CONFIG_READ: '1' } : {}), ...env }, execArgv: [], stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
     const next = inbox(child), exited = once(child, 'exit');
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) { child.kill(); await exited; } });
     return { next, exited, send: type => child.send({ type }) };
@@ -132,15 +138,16 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
   });
   for (const kind of ['repository root', 'repository subdirectory', 'linked worktree']) test(`projectKey resolves a ${kind} to the main worktree root`, async t => {
     const f = fixture(t);
-    execFileSync('git', ['init', '-q', f.cwd]);
-    execFileSync('git', ['-C', f.cwd, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'initial']);
+    const gitOptions = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
+    execFileSync('git', ['init', '-q', f.cwd], gitOptions);
+    execFileSync('git', ['-C', f.cwd, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'initial'], gitOptions);
     let cwd = f.cwd;
     if (kind === 'repository subdirectory') { cwd = path.join(f.cwd, 'sub'); fs.mkdirSync(cwd); }
-    if (kind === 'linked worktree') { cwd = path.join(f.home, 'linked'); execFileSync('git', ['-C', f.cwd, 'worktree', 'add', '-q', '-b', 'linked', cwd]); }
+    if (kind === 'linked worktree') { cwd = path.join(f.home, 'linked'); execFileSync('git', ['-C', f.cwd, 'worktree', 'add', '-q', '-b', 'linked', cwd], gitOptions); }
     assert.equal(await projectKey(cwd), f.cwd);
   });
 
-  test('sync copies only named project approvals, inherits trust, and is idempotent', async t => {
+  test('sync approves external imports with inherited trust and preserves unrelated fields', async t => {
     const f = fixture(t);
     write(path.join(f.home, '.claude.json'), { projects: { [f.home]: { hasTrustDialogAccepted: true }, [f.cwd]: {
       hasTrustDialogAccepted: false, hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: true, secret: 'max-only' } } });
@@ -148,18 +155,44 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     const maxBytes = fs.readFileSync(path.join(f.home, '.claude.json'), 'utf8');
     assert.deepEqual(await syncConsoleProject(f.cwd, f), { ok: true, wrote: true });
     assert.deepEqual(read(f.file), { oauthAccount: 'console-auth', projects: { [f.cwd]: { lastCost: 42,
-      hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: true } } });
+      ...approved } } });
     const bytes = fs.readFileSync(f.file, 'utf8');
     assert.deepEqual(await syncConsoleProject(f.cwd, f), { ok: true, wrote: false });
     assert.equal(fs.readFileSync(f.file, 'utf8'), bytes);
     assert.equal(fs.readFileSync(path.join(f.home, '.claude.json'), 'utf8'), maxBytes);
   });
+  for (const [name, entry] of [
+    ['false Max import keys', { hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: false }],
+    ['absent Max import keys', { hasTrustDialogAccepted: true }],
+  ]) test(`sync approves external imports with ${name}`, async t => {
+    const f = fixture(t), maxFile = path.join(f.home, '.claude.json');
+    write(maxFile, { projects: { [f.cwd]: entry } });
+    const maxBytes = fs.readFileSync(maxFile);
+    assert.deepEqual(await syncConsoleProject(f.cwd, f), { ok: true, wrote: true });
+    assert.deepEqual(read(f.file).projects[f.cwd], approved);
+    assert.deepEqual(fs.readFileSync(maxFile), maxBytes);
+  });
+  test('sync leaves approved Console bytes and mtime unchanged when Max import keys are false', async t => {
+    const f = fixture(t), maxFile = path.join(f.home, '.claude.json');
+    write(maxFile, { projects: { [f.cwd]: { hasTrustDialogAccepted: true,
+      hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: false } } });
+    write(f.file, { projects: { [f.cwd]: approved } });
+    fs.utimesSync(f.file, new Date(1000), new Date(1000));
+    const maxBytes = fs.readFileSync(maxFile), before = fs.readFileSync(f.file), mtime = fs.statSync(f.file).mtimeMs;
+    assert.deepEqual(await syncConsoleProject(f.cwd, f), { ok: true, wrote: false });
+    assert.deepEqual(read(f.file).projects[f.cwd], approved);
+    assert.deepEqual(fs.readFileSync(f.file), before);
+    assert.equal(fs.statSync(f.file).mtimeMs, mtime);
+    assert.deepEqual(fs.readFileSync(maxFile), maxBytes);
+  });
   test('sync refuses a missing project or trust without changing Console config', async t => {
     const f = fixture(t), before = fs.readFileSync(f.file, 'utf8');
     for (const projects of [{ [f.home]: approved }, { [f.cwd]: { hasTrustDialogAccepted: false } }]) {
       write(path.join(f.home, '.claude.json'), { projects });
+      const maxBytes = fs.readFileSync(path.join(f.home, '.claude.json'));
       assert.deepEqual(await syncConsoleProject(f.cwd, f), { ok: false, wrote: false, reason: 'unseeded' });
       assert.equal(fs.readFileSync(f.file, 'utf8'), before);
+      assert.deepEqual(fs.readFileSync(path.join(f.home, '.claude.json')), maxBytes);
     }
   });
   test('sync takes over an old-mtime lock directory and never creates a regular lock file', async t => {
@@ -177,7 +210,28 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     assert.ok(fs.lstatSync(f.file + '.lock').isDirectory());
     assert.equal(fs.readFileSync(f.file, 'utf8'), before);
   });
-  test('a forked sync holding the lock delays a second writer without losing keys', async t => {
+  test('sync takes over a lock only after the 10-second stale boundary', async t => {
+    const f = fixture(t), lock = f.file + '.lock', before = fs.readFileSync(f.file);
+    const at = 1_000_000;
+    fs.mkdirSync(lock); fs.utimesSync(lock, new Date(at), new Date(at));
+    const inode = fs.lstatSync(lock).ino;
+    assert.deepEqual(await syncConsoleProject(f.cwd, { ...f, timeoutS: 0, now: () => at + 10_000 }),
+      { ok: false, wrote: false, reason: 'lock-timeout' });
+    assert.equal(fs.lstatSync(lock).ino, inode);
+    assert.deepEqual(fs.readFileSync(f.file), before);
+    assert.deepEqual(await syncConsoleProject(f.cwd, { ...f, timeoutS: 0, now: () => at + 10_001 }),
+      { ok: true, wrote: true });
+    assert.equal(fs.existsSync(lock), false);
+    assert.deepEqual(read(f.file).projects[f.cwd], approved);
+  });
+  test('setup seed write times out under Claude lock and leaves config unchanged', async t => {
+    const f = fixture(t), lock = f.file + '.lock', before = fs.readFileSync(f.file);
+    fs.mkdirSync(lock);
+    await assert.rejects(setupConsoleDir({ ...f, timeoutS: 0 }), { code: 'CONSOLE_LOCK_TIMEOUT' });
+    assert.ok(fs.lstatSync(lock).isDirectory());
+    assert.deepEqual(fs.readFileSync(f.file), before);
+  });
+  test('a forked sync holding the lock delays a second writer without losing keys', { timeout: 10_000 }, async t => {
     const f = fixture(t), second = path.join(f.home, 'second'); fs.mkdirSync(second);
     write(path.join(f.home, '.claude.json'), { projects: { [f.cwd]: approved, [second]: approved } });
     const a = worker(t, f, f.cwd, 'sync', true), b = worker(t, f, second);
@@ -189,7 +243,7 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     assert.deepEqual(read(f.file).projects, { [f.cwd]: approved, [second]: approved });
     assert.equal(read(f.file).oauthAccount.account, 'console-only');
   });
-  test('a simulated Claude save racing two syncs loses no project or auth key', async t => {
+  test('a simulated Claude save racing two syncs loses no project or auth key', { timeout: 10_000 }, async t => {
     const f = fixture(t), second = path.join(f.home, 'second'); fs.mkdirSync(second);
     write(path.join(f.home, '.claude.json'), { projects: { [f.cwd]: approved, [second]: approved } });
     const claude = worker(t, f, f.cwd, 'claude'), a = worker(t, f, f.cwd), b = worker(t, f, second);
@@ -207,5 +261,45 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     await Promise.all([claude.exited, a.exited, b.exited]);
     assert.deepEqual(read(f.file).projects, { claude: { saved: true }, [f.cwd]: approved, [second]: approved });
     assert.equal(read(f.file).oauthAccount.account, 'console-only');
+  });
+  test('sync release preserves a replacement lock inode', { timeout: 10_000 }, async t => {
+    const f = fixture(t), lock = f.file + '.lock';
+    const a = worker(t, f, f.cwd, 'sync', true);
+    a.send('go'); await a.next('held');
+    fs.renameSync(lock, lock + '.old');
+    fs.mkdirSync(lock);
+    const replacement = fs.lstatSync(lock).ino;
+    a.send('release');
+    assert.deepEqual((await a.next('done')).result, { ok: true, wrote: true });
+    await a.exited;
+    assert.equal(fs.lstatSync(lock).ino, replacement);
+    assert.deepEqual(read(f.file).projects[f.cwd], approved);
+  });
+  for (const first of ['sync', 'setup']) test(`a forked ${first} and sync never overlap over a stale Claude lock`, { timeout: 10_000 }, async t => {
+    const f = fixture(t), lock = f.file + '.lock', second = path.join(f.home, 'second');
+    fs.mkdirSync(second);
+    write(path.join(f.home, '.claude.json'), { projects: { [f.cwd]: approved, [second]: approved } });
+    fs.mkdirSync(lock); fs.utimesSync(lock, new Date(0), new Date(0));
+    const a = worker(t, f, f.cwd, first, true);
+    a.send('go'); await a.next('held');
+    const inode = fs.lstatSync(lock).ino, before = fs.readFileSync(f.file);
+    // Advance the contender's clock past staleness while A is paused in its read.
+    // Claude's mkdir lock alone would let B enter A's critical section.
+    const b = worker(t, f, second, 'sync', true, { CONFIG_ONCE: '1', CONFIG_NOW: String(fs.lstatSync(lock).mtimeMs + 10_001) });
+    b.send('go');
+    const blocked = await b.next(['held', 'done']);
+    assert.equal(blocked.type, 'done', 'second writer entered the held critical section');
+    assert.deepEqual(blocked.result, { ok: false, wrote: false, reason: 'lock-timeout' });
+    assert.equal(fs.lstatSync(lock).ino, inode);
+    assert.deepEqual(fs.readFileSync(f.file), before);
+    a.send('release'); await a.next('done');
+    await Promise.all([a.exited, b.exited]);
+    const c = worker(t, f, second);
+    c.send('go'); assert.deepEqual((await c.next('done')).result, { ok: true, wrote: true });
+    await c.exited;
+    const value = read(f.file);
+    assert.deepEqual(value.projects, first === 'sync' ? { [f.cwd]: approved, [second]: approved } : { [second]: approved });
+    if (first === 'setup') assert.equal(value.hasCompletedOnboarding, true);
+    assert.equal(value.oauthAccount.account, 'console-only');
   });
 }

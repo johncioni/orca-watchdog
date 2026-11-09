@@ -612,6 +612,33 @@ test('overflow enable before setup exits non-zero with the setup instruction', a
   assert.match(result.stderr, /run 'orca-watchdog overflow setup' first/);
 });
 
+test('doctor gives overflow setup advice only when overflow is enabled', async t => {
+  const h = harness(); t.after(() => h.cleanup());
+  const { overflowPaths } = await import('./lib/overflow-state.mjs');
+  const paths = overflowPaths(h.home);
+  const disabled = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.equal(disabled.status, 0, disabled.stderr);
+  assert.match(disabled.stdout, /overflow: disabled/);
+  assert.doesNotMatch(disabled.stdout, /run 'orca-watchdog overflow setup'/);
+  assert.equal(fs.existsSync(paths.consoleDir), false);
+  fs.mkdirSync(paths.dir, { recursive: true }); fs.writeFileSync(paths.enabledFile, '');
+  const enabled = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.match(enabled.stdout, /overflow: enabled/);
+  assert.match(enabled.stdout, /not ready; run 'orca-watchdog overflow setup' first/);
+});
+
+test('doctor exits non-zero for enabled overflow whose Console dir is not ready', async t => {
+  const h = harness(); t.after(() => h.cleanup());
+  const { overflowPaths } = await import('./lib/overflow-state.mjs');
+  const paths = overflowPaths(h.home);
+  const before = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.equal(before.status, 0, before.stderr);
+  fs.mkdirSync(paths.dir, { recursive: true }); fs.writeFileSync(paths.enabledFile, '');
+  const after = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.equal(after.status, 1, after.stderr);
+  assert.match(after.stdout, /Console setup: not ready/);
+});
+
 test('overflow setup, enable, disable and doctor report readiness without changing the service', async t => {
   const h = harness(); t.after(h.cleanup);
   const { runCli, doctorText } = await loadManagement();
