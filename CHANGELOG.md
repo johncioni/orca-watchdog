@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Retry a failed Claude session registration write on the next poll, so a session changed by `/clear` or `/resume` cannot leave account switches waiting indefinitely. (DOG-85)
+
 ## 1.3.0 - 2026-11-09
 
 ### Added
