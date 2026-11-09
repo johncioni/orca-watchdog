@@ -163,7 +163,11 @@ orca-watchdog overflow status
 
 `enable` refuses until setup is ready. `status` shows the current launch mode, window deadline, credit mark, last error, blocked switches, live registrations, and requests. `orca-watchdog doctor` also reports whether setup is ready; it does not check your login.
 
-Use `orca-watchdog overflow disable` to prevent new Console launches. `orca-watchdog overflow clear-credit` clears only the exhausted-credit mark, leaving the window and switch evidence intact. These commands do not start or stop the service.
+A Console session switches back to Max when the limit resets and it is idle, or when its current turn reports `Credit balance too low · Add funds:`. Quoted errors and errors followed by newer output do not trigger a switch. Billing switches use the same idle, draft, foreground and session checks as other switches. The resumed Max session waits for its allowance to reset through the ordinary watchdog path.
+
+If a failed switch leaves a session on Console, the watchdog waits 30 minutes before trying again. After four consecutive failed switches, it stops retrying that wrapper and logs a warning. Both `overflow status` and `doctor` show a “stuck on Console credit” line with the time and failure count; exit Claude in that tab to restart it on Max. This alert does not change doctor’s exit status.
+
+Use `orca-watchdog overflow disable` to prevent new Console launches. `orca-watchdog overflow clear-credit` clears only the exhausted-credit mark, leaving the window and switch evidence intact. A Console session still showing a current billing error sets the mark again until it switches or you exit it. These commands do not start or stop the service.
 
 Run an eligible session with an explicit model:
 

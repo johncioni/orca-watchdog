@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fork } from 'node:child_process';
+import { fork, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import * as state from './lib/overflow-state.mjs';
@@ -53,7 +53,7 @@ if (process.env.OVERFLOW_STATE_WORKER) {
   });
   test('mode evidence round trip survives unrelated updates and old files default to empty evidence', async t => {
     const opts = fixture(t);
-    assert.deepEqual(state.readMode(opts), { until: null, creditExhaustedUntil: null, lastError: null, noSwitch: [], evidence: {} });
+    assert.deepEqual(state.readMode(opts), { until: null, creditExhaustedUntil: null, lastError: null, noSwitch: [], evidence: {}, switchBackRetry: {} });
     const evidence = { pane: { bannerText: 'limit', resetAt: '2026-11-09T00:00:00Z', acceptedAt: '2026-11-08T12:00:00Z', episode: 'episode' } };
     await state.updateMode(() => ({ until: '2026-11-09T00:00:00Z', evidence }), opts);
     await state.updateMode(() => ({ creditExhaustedUntil: null }), opts);
@@ -63,6 +63,27 @@ if (process.env.OVERFLOW_STATE_WORKER) {
     assert.deepEqual(state.readMode(opts).evidence, {});
     fs.writeFileSync(state.overflowPaths(opts.home).modeFile, '{broken');
     assert.equal(state.readMode(opts).until, null);
+  });
+  test('A15: optional retry map round-trips and malformed values preserve the other mode fields', async t => {
+    const tmp = spawnSync('mktemp', ['-d', '/tmp/ova4.XXXXXX'], { encoding: 'utf8' });
+    assert.equal(tmp.status, 0); const opts = { home: tmp.stdout.trim() };
+    t.after(() => fs.rmSync(opts.home, { recursive: true, force: true }));
+    const entry = { failures: 2, nextAt: '2026-11-09T12:30:00Z', stuckAt: null };
+    const switchBackRetry = { 'pane:123': entry };
+    const before = await state.updateMode(() => ({ until: '2026-11-09T13:00:00Z', lastError: 'keep', noSwitch: ['other:1'],
+      evidence: { pane: { resetAt: '2026-11-09T13:00:00Z' } }, switchBackRetry }), opts);
+    await state.updateMode(() => ({ creditExhaustedUntil: null }), opts);
+    assert.deepEqual(state.readMode(opts), before);
+    const file = state.overflowPaths(opts.home).modeFile;
+    for (const malformed of [undefined, null, [], 'bad', 1, { 'pane:123': null },
+      { 'pane:123': { ...entry, failures: -1 } }, { 'pane:123': { ...entry, failures: 1.5 } },
+      { 'pane:123': { ...entry, nextAt: 'bad' } }, { 'pane:123': { ...entry, nextAt: null } },
+      { 'pane:123': { ...entry, stuckAt: 'bad' } }]) {
+      fs.writeFileSync(file, JSON.stringify({ ...before, switchBackRetry: malformed }));
+      assert.deepEqual(state.readMode(opts), { ...before, switchBackRetry: {} });
+    }
+    await state.updateMode(() => ({ switchBackRetry: { 'pane:123': { ...entry, failures: 4, stuckAt: entry.nextAt } } }), opts);
+    assert.equal(state.readMode(opts).switchBackRetry['pane:123'].failures, 4);
   });
   test('withFlock excludes a second process until release and releases on holder death', async t => {
     const { home } = fixture(t), lock = path.join(home, 'lock');

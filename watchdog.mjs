@@ -13,7 +13,7 @@ import { runObservedCheck, atomicWriteFile, readRegularSync } from './lib/operat
 import { appendActivity, maintainLogs } from './lib/logs.mjs';
 import { VERSION } from './version.mjs';
 import * as overflowState from './lib/overflow-state.mjs';
-import { planOverflow, SWITCH_SEND_TIMEOUT_MS } from './lib/overflow.mjs';
+import { planOverflow, SWITCH_SEND_TIMEOUT_MS, SWITCH_BACK_RETRY_MS, SWITCH_BACK_RETRIES } from './lib/overflow.mjs';
 
 export const RESUME_TEXT = 'Session rate limit has reset. Resume where you left off.';
 
@@ -1334,9 +1334,34 @@ function overflowBanner(banner, platform, now) {
   return { ...banner, platform, resetAt, parsedReset: resetAt !== null };
 }
 function overflowBilling(tail) {
-  const window = toWindow(stripSidePanel(tail)), footer = footerStartFor('claude', window);
-  return window.slice(0, footer < 0 ? window.length : footer - 2)
-    .some(line => /Credit balance too low · Add funds:/.test(line));
+  const source = stripSidePanel(tail).slice(-TAIL_LINES).map(line => stripAnsi(line).slice(0, WINDOW_LINE_MAX));
+  const window = source.map(line => line.trim()), footer = footerStartFor('claude', window);
+  const end = footer < 0 ? window.length : footer - 2;
+  const url = 'https://platform.claude.com/settings/billing';
+  const notice = 'Goal cleared after an unrecoverable error (credit balance too low)';
+  return source.slice(0, end).some((line, index) => {
+    const match = /^(\s*⎿\s+)Credit balance too low · Add funds:(.*)$/.exec(line);
+    if (!match) return false;
+    let rest = match[2].replace(/\s/g, ''), next = index + 1;
+    if (rest !== url && url.startsWith(rest)) {
+      for (let count = 0; count < 2 && next < end && rest !== url; count++) {
+        const continuation = /^(\s*)(\S+)$/.exec(source[next].trimEnd());
+        if (!continuation || continuation[1].length !== match[1].length
+          || !url.startsWith(rest + continuation[2])) break;
+        rest += continuation[2]; next++;
+      }
+      if (rest !== url) return false;
+    }
+    for (; next < end; next++) {
+      const text = window[next];
+      if (text === '' || providerFor('claude').chrome.trailing.some(re => re.test(text))) continue;
+      const goal = text.replace(/^[⏺⎿]\s+/, '');
+      if (goal === notice) continue;
+      if (next + 1 < end && `${goal} ${window[next + 1]}` === notice) { next++; continue; }
+      return false;
+    }
+    return true;
+  });
 }
 
 async function applyOverflow({ context, observations, events, sendCandidates, byHandle, now, dryRun, deps, saveCapture }) {
@@ -1354,8 +1379,15 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
   };
   const restoreOutcome = async (handle, q) => {
     const { effects, kind } = q.outcome;
-    await overflowState.updateMode(mode => ({ lastError: effects.lastError,
-      noSwitch: [...new Set([...mode.noSwitch, ...effects.noSwitch ?? []])] }), ov);
+    let pinned;
+    await overflowState.updateMode(mode => {
+      const key = `${handle}:${q.wrapperPid}`, retry = effects.switchBackRetry?.[key];
+      if (retry?.stuckAt && !mode.switchBackRetry[key]?.stuckAt) pinned = retry;
+      return { lastError: effects.lastError,
+        noSwitch: [...new Set([...mode.noSwitch, ...effects.noSwitch ?? []])],
+        switchBackRetry: { ...mode.switchBackRetry, ...effects.switchBackRetry } };
+    }, ov);
+    if (pinned) log('warn', `overflow: ${handle} stuck on Console credit after ${pinned.failures} failed switches to Max`);
     await ov.afterOutcomeStep?.(2);
     for (const [key, ev] of Object.entries(events)) if (ev.handle === handle) delete events[key];
     Object.assign(events, structuredClone(q.eventSnapshot));
@@ -1406,10 +1438,16 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
     await locked(handle, async q => {
       if (!q) return null;
       if (q.outcome) return restoreOutcome(handle, q);
-      const fresh = planOverflow({ ...input, ...await overflowFacts(ov, handle), mode: overflowState.readMode(ov),
+      const facts = await overflowFacts(ov, handle);
+      const fresh = planOverflow({ ...input, ...facts, mode: overflowState.readMode(ov),
         requests: new Map([[handle, q]]), now: deps.now() });
       const confirm = fresh.confirms.find(a => a.handle === handle);
       if (confirm) {
+        if (q.to === 'max') await overflowState.updateMode(mode => {
+          const switchBackRetry = { ...mode.switchBackRetry };
+          delete switchBackRetry[`${handle}:${q.wrapperPid}`];
+          return { switchBackRetry };
+        }, ov);
         for (const [key, ev] of Object.entries(events)) {
           if (ev.handle === handle && Date.parse(ev.detectedAt) < Date.parse(confirm.successorLaunchedAt)) {
             delete events[key]; log('info', `removed ${ev.kind} on ${handle}: switched`);
@@ -1424,10 +1462,23 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
         const action = fresh[field].find(a => a.handle === handle);
         if (!action) continue;
         const reason = action.reason ?? 'launch mode changed';
-        const outcome = { kind, reason, at: deps.now().toISOString(), effects: {
+        const at = deps.now(), key = `${handle}:${q.wrapperPid}`;
+        const survivor = facts.registrations.filter(r => r.wrapperPid === q.wrapperPid)
+          .sort((a, b) => b.generation - a.generation)[0];
+        const effects = {
           lastError: `overflow ${kind} on ${handle}: ${reason}`,
-          noSwitch: kind === 'supersede' ? [] : [`${handle}:${q.wrapperPid}`],
-        } };
+          noSwitch: [],
+        };
+        if (kind !== 'supersede' && survivor && facts.facts.alive.has(q.wrapperPid)) {
+          if (survivor.mode === 'max') effects.noSwitch.push(key);
+          else if (survivor.mode === 'console') {
+            const failures = (overflowState.readMode(ov).switchBackRetry[key]?.failures ?? 0) + 1;
+            const stuckAt = failures > SWITCH_BACK_RETRIES ? at.toISOString() : null;
+            effects.switchBackRetry = { [key]: { failures, nextAt: new Date(+at + SWITCH_BACK_RETRY_MS).toISOString(), stuckAt } };
+            if (stuckAt) effects.noSwitch.push(key);
+          }
+        }
+        const outcome = { kind, reason, at: at.toISOString(), effects };
         const recorded = { ...q, outcome };
         // Publish the journal while updateRequest holds the lock, before any
         // other file changes; returning null deletes it only after restoration.
@@ -1463,21 +1514,24 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
       const freshBanner = detectBanner(read.tail, 'claude', at, { consoleRows: r.mode === 'console' });
       const freshObservations = new Map(observations);
       freshObservations.set(handle, { read: true, banner: overflowBanner(freshBanner, 'claude', at),
-        billing: r.mode === 'console' && overflowBilling(read.tail) });
+        billing: r.mode === 'console' ? overflowBilling(read.tail) : null });
       const requests = new Map(context.requests);
       if (q) requests.set(handle, q); else requests.delete(handle);
-      const fresh = planOverflow({ ...input, ...facts, enabled: overflowState.isEnabled(ov), mode: overflowState.readMode(ov),
+      const freshMode = overflowState.readMode(ov);
+      const fresh = planOverflow({ ...input, ...facts, enabled: overflowState.isEnabled(ov), mode: freshMode,
         observations: freshObservations, requests, now: at });
+      const selection = fresh.switches.find(a => a.handle === handle && a.to === to);
       const allowed = planned ? q && fresh.resends.some(a => a.handle === handle)
-        : !q && fresh.switches.some(a => a.handle === handle && a.to === to);
+        : !q && selection;
       const session = facts.sessions.get(`${r.configDir}:${r.claudePid}`);
       if (!allowed || !facts.facts.foreground.has(handle) || session?.status !== 'idle' || session.sessionId !== r.sessionId
         || (q && session.sessionId !== q.sessionId) || isShellPrompt(read.tail, byHandle.get(handle)?.agentIdentity)
         || isInputOccupied(read.tail, 'claude', read.draft) || (to === 'console' && freshBanner?.kind !== 'limit')
+        || ((q ?? selection)?.reason === 'billing' && !overflowState.switchBackDue(freshMode, at) && !freshObservations.get(handle).billing)
         || deps.isDisabled()) return q;
       const next = q ? { ...q, attempts: q.attempts + 1, sentAt: at.toISOString() }
         : { state: 'pending', handle, wrapperPid: r.wrapperPid, generation: r.generation, sessionId: r.sessionId,
-          to, attempts: 1, sentAt: at.toISOString(), createdAt: at.toISOString(),
+          to, reason: selection.reason, attempts: 1, sentAt: at.toISOString(), createdAt: at.toISOString(),
           eventSnapshot: structuredClone(Object.fromEntries(Object.entries(events).filter(([, ev]) => ev.handle === handle))) };
       // Keep the lock through the send so an independent Claude exit cannot
       // consume this request and launch a successor between persistence and /exit.
@@ -1548,7 +1602,7 @@ export async function tick({ dryRun }, depsIn = {}) {
         const consoleRows = consoleHandles.has(t.handle);
         const readAt = deps.now();
         const banner = detectBanner(tail, inferPlatform(t), readAt, { consoleRows });
-        overflowObservations.set(t.handle, { read: true, banner: overflowBanner(banner, inferPlatform(t, banner), readAt), billing: consoleRows && overflowBilling(tail) });
+        overflowObservations.set(t.handle, { read: true, banner: overflowBanner(banner, inferPlatform(t, banner), readAt), billing: consoleRows ? overflowBilling(tail) : null });
         if (!banner && shouldLog('debug') && hasOutageLine(tail, { consoleRows })) {
           const blocker = classifyOutageNearMiss(tail, inferPlatform(t), { consoleRows });
           if (blocker !== null) {

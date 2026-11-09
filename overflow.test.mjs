@@ -15,7 +15,7 @@ const limit = hour => [`Claude usage limit reached. Your limit will reset at ${h
 const outage = ['⎿ API Error: 529 overloaded_error', ...box];
 // Claude 2.1.319 bundle wording; unverified live (spike item 6).
 const console429 = ['⎿ API Error: Request rejected (429) · this may be a temporary capacity issue.', ...box];
-const billing = ['⎿ Credit balance too low · Add funds: https://platform.claude.com/settings/billing', ...box];
+const billing = ['  ⎿  Credit balance too low · Add funds: https://platform.claude.com/settings/billing', ...box];
 function observed(lines, now = NOW) {
   const b = detectBanner(lines, 'claude', now);
   return { ...b, platform: 'claude', resetAt: parseResetTime(b.bannerText, now)?.toISOString() ?? null, parsedReset: true };
@@ -105,11 +105,12 @@ test('noSwitch blocks either direction and is pruned only when its registration 
     i.registrations[0].wrapperPid = 2001; i.facts.alive.add(2001); assert.equal(planOverflow(i).switches.length, 1);
   }
 });
-test('billing-only read marks credit through the next UTC month without a send', () => {
+test('billing-only read marks credit through the next UTC month and plans Max', () => {
   const i = input(); i.registrations[0].mode = 'console'; i.mode.until = iso(300);
   i.observations.set(H, { read: true, banner: null, billing: true }); const p = planOverflow(i);
-  assert.equal(p.mode.creditExhaustedUntil, '2026-12-01T00:00:00.000Z'); assert.deepEqual(p.switches, []);
-  assert.equal(p.suppress.get(H), 'limit-credits');
+  assert.equal(p.mode.creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+  assert.equal(p.switches[0]?.to, 'max'); assert.equal(p.switches[0]?.reason, 'billing');
+  assert.equal(p.suppress.get(H), 'all');
 });
 test('credit exhaustion waits for the deadline; passing mid-turn waits for idle', () => {
   const i = input(); i.registrations[0].mode = 'console'; i.mode.until = iso(300); i.mode.creditExhaustedUntil = iso(900);
@@ -151,7 +152,7 @@ for (const [name, launch, age, session, field] of [
 });
 
 function tempHome(t) {
-  const result = spawnSync('mktemp', ['-d', '/tmp/ovt4.XXXXXX'], { encoding: 'utf8' });
+  const result = spawnSync('mktemp', ['-d', '/tmp/ova4.XXXXXX'], { encoding: 'utf8' });
   assert.equal(result.status, 0); const home = result.stdout.trim();
   t.after(() => fs.rmSync(home, { recursive: true, force: true })); return home;
 }
@@ -243,7 +244,7 @@ test('cleared episode drops evidence so identical text next day opens a new wind
 test('billing-only tick marks credit and footer billing text does not', async t => {
   const h = await setup(t, { registration: { mode: 'console' } }); await store.updateMode(() => ({ until: iso(300) }), h.opts);
   h.tail = [...box, billing[0]]; await h.run(); assert.equal(store.readMode(h.opts).creditExhaustedUntil, null);
-  h.tail = billing; await h.run(); assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z'); assert.deepEqual(h.sends(), []);
+  h.tail = billing; await h.run(); assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z'); assert.equal(store.readRequest(H, h.opts)?.reason, 'billing');
 });
 async function successor(h, launch = { mode: 'console', reason: 'ok' }, launchedAt = iso(0)) {
   await store.updateRequest(H, q => ({ ...q, state: 'consumed', consumedAt: iso(0), successorGeneration: 2, launch }), h.opts);
@@ -262,11 +263,16 @@ test('switch-back reprint sends nothing on confirmation', async t => {
   assert.equal(store.readRequest(H, h.opts), null); assert.equal(h.events()[H], undefined);
   assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
 });
-for (const reason of ['admission-timeout', 'preflight:unseeded', undefined]) test(`${reason ?? 'missing launch'} fallback remains noSwitch after restart`, async t => {
+for (const reason of ['admission-timeout', 'preflight:unseeded', undefined]) test(`${reason ?? 'missing launch'} fallback holds later switches after restart`, async t => {
   const h = await setup(t); await h.run(); await successor(h, reason ? { mode: 'max', reason } : undefined);
   if (!reason) await store.updateRequest(H, q => { delete q.launch; return q; }, h.opts);
   h.now = new Date(iso(3)); await h.run(); assert.equal(store.readRequest(H, h.opts), null);
-  assert.ok(store.readMode(h.opts).noSwitch.includes(`${H}:1001`)); assert.ok(store.readMode(h.opts).lastError);
+  const mode = store.readMode(h.opts); assert.ok(mode.lastError);
+  if (reason) assert.ok(mode.noSwitch.includes(`${H}:1001`));
+  else {
+    assert.deepEqual(mode.noSwitch, []);
+    assert.deepEqual(mode.switchBackRetry, { [`${H}:1001`]: { failures: 1, nextAt: iso(33), stuckAt: null } });
+  }
   await h.run(); await h.run(); assert.equal(h.sends().length, 1);
 });
 test('deadline-passed launch fallback supersedes without noSwitch', async t => {
@@ -291,7 +297,7 @@ for (const kind of ['fail', 'cancel', 'supersede']) for (const step of [1, 2, 3]
   const q = store.readRequest(H, h.opts); assert.equal(q.outcome.kind, kind); assert.ok(q.outcome.effects.lastError);
   await h.run(); assert.deepEqual(h.events()[H], original); assert.equal(store.readRequest(H, h.opts), null);
   const mode = store.readMode(h.opts); assert.equal(mode.lastError, q.outcome.effects.lastError);
-  assert.equal(mode.noSwitch.includes(`${H}:1001`), kind !== 'supersede');
+  assert.equal(mode.noSwitch.includes(`${H}:1001`), kind === 'fail');
   // Reinsert the exact durable outcome to emulate a repeated recovery, with no new observation.
   await store.updateRequest(H, () => q, h.opts); await h.run();
   assert.deepEqual(h.events()[H], original); assert.deepEqual(store.readMode(h.opts), mode); assert.equal(store.readRequest(H, h.opts), null);
@@ -408,7 +414,7 @@ test('a recorded outcome replays after overflow is disabled', async t => {
   await assert.rejects(h.run(false, { overflow: { afterOutcomeStep: step => { if (step === 1) throw new Error('crash'); } } }), /crash/);
   fs.unlinkSync(h.paths.enabledFile); await h.run();
   assert.equal(store.readRequest(H, h.opts), null); assert.deepEqual(h.events()[H], event());
-  assert.ok(store.readMode(h.opts).noSwitch.includes(`${H}:1001`)); assert.equal(h.sends().length, 1);
+  assert.deepEqual(store.readMode(h.opts).noSwitch, []); assert.equal(h.sends().length, 1);
 });
 test('dry-run reports a credit mark without changing mode or requests', async t => {
   const h = await setup(t, { registration: { mode: 'console' } }); await store.updateMode(() => ({ until: iso(300) }), h.opts);
@@ -554,4 +560,355 @@ for (const blocker of ['noSwitch', 'credit', 'session', 'ineligible', 'backgroun
   if (blocker === 'ineligible') { h.r.eligible = false; store.updateRegistration(h.r, h.opts); }
   if (blocker === 'background') h.ps = '1001 99 ttys099';
   await h.run(); assert.equal(h.logs.filter(([, message]) => message.includes('pid-file status')).length, 0);
+});
+
+// A16 screens use spike item 6's sighted billing text, CLAUDE_SESSION_LIMIT_*
+// indentation/wrap, DOG-77 goal markers and the closed input box/footer. No captured billing
+// screen exists yet; Task 6 will capture it with and without a goal.
+const billingFooter = ['─'.repeat(128), '❯', '─'.repeat(128),
+  '  [Opus 4.8 (1M context) ◕ xhigh] │ project git:(main) │ ⏱️   <1m',
+  '  Context █░░░░░░░░░ 7% │ Usage ██░░░░░░░░ 23% (resets in 4h 32m)',
+  '  2 CLAUDE.md | 1 MCPs | 15 hooks', '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent'];
+const billingLine = '  ⎿  Credit balance too low · Add funds: https://platform.claude.com/settings/billing';
+const goalCleared = '⏺ Goal cleared after an unrecoverable error (credit balance too low)';
+const billingScreen = (...after) => [billingLine, ...after, ...billingFooter];
+const retryKey = `${H}:1001`;
+const retryEntry = (failures = 1, nextAt = iso(30), stuckAt = null) => ({ failures, nextAt, stuckAt });
+async function consoleSetup(t) {
+  const h = await setup(t, { registration: { mode: 'console' } });
+  await store.updateMode(() => ({ until: iso(300) }), h.opts); h.tail = billingScreen(); return h;
+}
+for (const after of [[], [goalCleared], ['', '✻ Cooked for 21m 11s · done 8:56 PM']]) {
+  test(`A14: current billing marks and switches before reset with ${after.join(' / ') || 'no following output'}`, async t => {
+    const h = await consoleSetup(t); h.tail = billingScreen(...after); await h.run();
+    assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+    const q = store.readRequest(H, h.opts); assert.equal(q?.to, 'max'); assert.equal(q.reason, 'billing');
+    assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+  });
+}
+const billingBlocks = [
+  ['same-line URL', [billingLine]],
+  ['column-5 URL', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/settings/billing']],
+  ['two column-5 URL lines', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/settings/', '     billing']],
+  ['partial same-line URL', ['  ⎿  Credit balance too low · Add funds: https://platform.', '     claude.com/settings/', '     billing']],
+];
+const goalNotices = [
+  ['no notice', []],
+  ['marked notice', [goalCleared]],
+  ['wrapped marked notice', ['⏺ Goal cleared after an unrecoverable error', '(credit balance too low)']],
+  ['response notice', ['  ⎿  Goal cleared after an unrecoverable error (credit balance too low)']],
+  ['wrapped response notice', ['  ⎿  Goal cleared after an unrecoverable error', '     (credit balance too low)']],
+  ['bare notice', [goalCleared.slice(2)]],
+  ['wrapped bare notice', ['Goal cleared after an unrecoverable error', '(credit balance too low)']],
+];
+for (const [shape, block] of billingBlocks) for (const [notice, after] of goalNotices) {
+  test(`A16: ${shape} with ${notice} marks and switches`, async t => {
+    const h = await consoleSetup(t); h.tail = [...block, ...after, ...billingFooter]; await h.run();
+    assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+    const q = store.readRequest(H, h.opts);
+    assert.equal(q?.to, 'max'); assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+    assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+  });
+}
+for (const [name, line] of [
+  ['column-0', billingLine.trimStart()],
+  ['deeper indent', `       ${billingLine.trimStart()}`],
+  ['exact tool-result residual', billingLine],
+  ['different URL residual', '  ⎿  Credit balance too low · Add funds: https://example.com/billing'],
+  ['scheme-less same-line remainder', '  ⎿  Credit balance too low · Add funds: platform.claude.com/settings/billing'],
+  ['http same-line remainder', '  ⎿  Credit balance too low · Add funds: http://platform.claude.com/settings/billing'],
+  ['path same-line remainder', '  ⎿  Credit balance too low · Add funds: /usage-credits'],
+]) test(`A16: ${name} marks and switches`, async t => {
+  const h = await consoleSetup(t); h.tail = [line, ...billingFooter]; await h.run();
+  assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+  const q = store.readRequest(H, h.opts);
+  assert.equal(q?.to, 'max'); assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+});
+const staleBillingOutput = [
+  ['column-5 retry', ['     Retrying in 5s… (attempt 2/10)']],
+  ['column-2 retry', ['  Retrying in 5s… (attempt 2/10)']],
+  ['bare Console 429', ['     API Error: Request rejected (429) · this may be a temporary capacity issue.']],
+  ['tool summary', ['     Read 1 file']],
+  ['Done token', ['     Done.']],
+  ['bare marker', ['     ⏺']],
+  ['words', ['     Add more funds to continue']],
+  ['answer', ['⏺ Work continued']],
+  ['other goal notice', ['⏺ Goal still active · retrying']],
+  ['prompt and column-2 Console 429', ['❯ try again', '  ⎿  API Error: Request rejected (429) · this may be a temporary capacity issue.']],
+  ['token after completed URL', ['     billing']],
+];
+const nonBillingScreens = [
+  ...billingBlocks.flatMap(([shape, block]) => staleBillingOutput.map(([name, after]) =>
+    [`${shape}: ${name}`, [...block, ...after, ...billingFooter]])),
+  ['missing URL', ['  ⎿  Credit balance too low · Add funds:', ...billingFooter]],
+  ['missing URL with non-URL token', ['  ⎿  Credit balance too low · Add funds:', '     Done.', ...billingFooter]],
+  ['URL incomplete after two lines', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.', '     claude.com/settings/', ...billingFooter]],
+  ['URL needs three lines', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.', '     claude.com/settings/', '     billing', ...billingFooter]],
+  ['URL at wrong indent', ['  ⎿  Credit balance too low · Add funds:', '  https://platform.claude.com/settings/billing', ...billingFooter]],
+  ['URL containing whitespace', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/ settings/billing', ...billingFooter]],
+  ['wrapped different URL', ['  ⎿  Credit balance too low · Add funds:', '     https://example.com/billing', ...billingFooter]],
+  ['interrupted goal notice', billingScreen('⏺ Goal cleared after an unrecoverable error', '', '(credit balance too low)')],
+  ['three-line goal notice', billingScreen('⏺ Goal cleared after an', 'unrecoverable error', '(credit balance too low)')],
+  ['answer quote', [`⏺ The error says ${billingLine.slice(5)}`, ...billingFooter]],
+  ['tool prefix', [`  ⎿  Tool output: ${billingLine.slice(5)}`, ...billingFooter]],
+  ['later answer', billingScreen('⏺ Work continued')],
+  ['prompt and Console 429', billingScreen('❯ try again', console429[0])],
+  ['retry line', billingScreen('Retrying in 2 seconds…')],
+  ['plain prose', billingScreen('Work continued')],
+  ['footer quote', [...billingFooter, billingLine]],
+];
+for (const [name, screen] of nonBillingScreens) for (const [phase, expected] of [
+  ['observation', { credit: null, request: null, exits: 0 }],
+  ['fresh read', { credit: '2026-12-01T00:00:00.000Z', request: null, exits: 0 }],
+  ['resend', { credit: '2026-12-01T00:00:00.000Z', request: { to: 'max', reason: 'billing', attempts: 1 }, exits: 1 }],
+]) {
+  test(`A14: ${name} is not current billing at ${phase}`, async t => {
+    const h = await consoleSetup(t);
+    if (phase === 'resend') {
+      await h.run(); assert.equal(store.readRequest(H, h.opts)?.reason, 'billing'); h.now = new Date(iso(3));
+    }
+    let waited = false;
+    if (phase === 'observation') h.tail = screen;
+    else h.onWait = () => { waited = true; h.tail = screen; };
+    const before = store.readRequest(H, h.opts); await h.run();
+    if (phase !== 'observation') assert.equal(waited, true);
+    const q = store.readRequest(H, h.opts); assert.deepEqual(q, before);
+    assert.deepEqual(q && { to: q.to, reason: q.reason, attempts: q.attempts }, expected.request);
+    assert.equal(h.sends().filter(a => a[5] === '/exit').length, expected.exits);
+    assert.equal(store.readMode(h.opts).creditExhaustedUntil, expected.credit);
+  });
+}
+for (const blocker of ['busy', 'draft', 'noSwitch', 'retry hold', 'session disagreement']) {
+  test(`A14: ${blocker} keeps the credit mark but blocks a billing request`, async t => {
+    const h = await consoleSetup(t);
+    if (blocker === 'busy') h.session({ sessionId: 's1', status: 'busy' });
+    if (blocker === 'draft') h.draft = 'keep my draft';
+    if (blocker === 'noSwitch') await store.updateMode(() => ({ noSwitch: [retryKey] }), h.opts);
+    if (blocker === 'retry hold') await store.updateMode(() => ({ switchBackRetry: { [retryKey]: retryEntry() } }), h.opts);
+    if (blocker === 'session disagreement') h.session({ sessionId: 's2', status: 'idle' });
+    await h.run(); assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+    assert.equal(store.readRequest(H, h.opts), null); assert.deepEqual(h.sends(), []);
+  });
+}
+for (const recovery of ['next tick', 'during the read', 'only on recheck']) test(`A16: billing request holds across ps timeout with recovery ${recovery}`, async t => {
+  const h = await consoleSetup(t); h.sendFailure = true;
+  await h.run(); const q = store.readRequest(H, h.opts);
+  assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+  h.now = new Date(iso(3)); h.ps = new Error('ps timed out');
+  if (recovery === 'during the read') h.onCall = args => { if (args[1] === 'read') h.ps = '1001 1001 ttys099'; };
+  if (recovery === 'only on recheck') {
+    h.ps = '1001 1001 ttys099'; h.tail = billingScreen('⏺ Work continued');
+    h.onCall = args => { if (args[1] === 'read') h.ps = new Error('ps timed out'); };
+  }
+  const outcomes = [];
+  await h.run(false, { overflow: { afterOutcomeStep: step => { if (step === 1) outcomes.push(store.readRequest(H, h.opts).outcome); } } });
+  assert.deepEqual(outcomes, []); assert.deepEqual(store.readRequest(H, h.opts), q);
+  assert.equal(h.sends().length, 1); assert.deepEqual(store.readMode(h.opts).switchBackRetry, {});
+  h.onCall = null; h.tail = billingScreen(); h.ps = '1001 1001 ttys099'; h.sendFailure = false; await h.run();
+  const retried = store.readRequest(H, h.opts);
+  assert.equal(retried?.createdAt, q.createdAt); assert.equal(retried?.attempts, 2);
+  assert.equal(retried?.reason, 'billing'); assert.equal(retried?.sentAt, iso(3));
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit', '/exit']);
+});
+for (const variant of ['cleared', 'failed read', 'due', 'inside window', 'session changed']) {
+  test(`A14: billing request after restart with ${variant}`, async t => {
+    const h = await consoleSetup(t);
+    const original = newEvent({ handle: H, platform: 'claude', banner: detectBanner(outage, 'claude') }, new Date(iso(-20)));
+    saveState({ [H]: original }, h.stateDir);
+    h.sendFailure = true; await h.run(); const q = store.readRequest(H, h.opts);
+    assert.equal(q?.reason, 'billing'); h.sendFailure = false; h.now = new Date(iso(3));
+    h.tail = billingScreen('⏺ Work continued');
+    if (variant === 'failed read') {
+      // Another successful read keeps this a healthy tick while this handle fails.
+      h.terminals.push({ handle: 'term_other', connected: true, writable: true, agentIdentity: 'claude' });
+      h.onCall = args => { if (args[1] === 'read') h.readFailure = args[3] === H; };
+    }
+    if (variant === 'due') await store.updateMode(() => ({ until: iso(-1) }), h.opts);
+    if (variant === 'inside window') h.now = new Date(iso(1));
+    if (variant === 'session changed') { h.r.sessionId = 's2'; store.updateRegistration(h.r, h.opts); h.session(); }
+    const outcomes = [];
+    await h.run(false, { overflow: { afterOutcomeStep: step => { if (step === 1) outcomes.push(store.readRequest(H, h.opts).outcome); } } });
+    if (variant === 'failed read' || variant === 'inside window') {
+      assert.deepEqual(store.readRequest(H, h.opts), q); assert.equal(h.sends().length, 1); return;
+    }
+    if (variant === 'due') { assert.equal(store.readRequest(H, h.opts).attempts, 2); assert.equal(h.sends().length, 2); return; }
+    assert.equal(outcomes[0]?.kind, 'supersede');
+    assert.equal(outcomes[0].reason, variant === 'session changed' ? 'session-changed' : 'billing-cleared');
+    assert.equal(store.readRequest(H, h.opts), null); assert.deepEqual(h.events(), q.eventSnapshot);
+    assert.deepEqual(store.readMode(h.opts).switchBackRetry, {}); assert.deepEqual(store.readMode(h.opts).noSwitch, []);
+    assert.equal(h.sends().length, 1);
+    h.tail = outage; await h.run(); assert.deepEqual(h.sends().map(a => a[5]), ['/exit', OUTAGE_RESUME_TEXT]);
+  });
+}
+test('A14: confirmed billing switch is on Max and clear-credit stays cleared', async t => {
+  const h = await consoleSetup(t); await h.run(); assert.equal(store.readRequest(H, h.opts)?.reason, 'billing');
+  await successor(h, { mode: 'max', reason: 'ok' }); h.now = new Date(iso(1)); await h.run();
+  assert.equal(store.readRequest(H, h.opts), null); assert.equal(store.readRegistrations(h.opts)[0].mode, 'max');
+  const { runCli } = await import('./lib/management.mjs');
+  await runCli(['overflow', 'clear-credit'], { env: { HOME: h.home }, stdout: { write() {} } });
+  await h.run(); assert.equal(store.readMode(h.opts).creditExhaustedUntil, null);
+});
+test('A14: a legacy reasonless Max request still retries without billing before the deadline', async t => {
+  const h = await consoleSetup(t); h.tail = box;
+  await store.updateRequest(H, () => request({ to: 'max', sentAt: iso(-3) }), h.opts);
+  await h.run(); assert.equal(store.readRequest(H, h.opts).attempts, 2); assert.equal(h.sends().length, 1);
+});
+
+// Every cancel/fail row is exercised through durable request/mode files. The
+// survivor's mode intentionally varies independently of the request direction.
+const failureRows = [
+  ['switch retries exhausted', {}, { attempts: 3, sentAt: iso(-3) }],
+  ['generation mismatch', { generation: 0 }, {}],
+  ['successor not registered', {}, { state: 'consumed', consumedAt: iso(-15) }],
+  ['successor session not confirmed', { generation: 2, launchedAt: iso(-10) },
+    { state: 'consumed', to: 'console', launch: { mode: 'console', reason: 'ok' } }],
+  ['fallback generation', { generation: 3 }, {}],
+  ['admission-timeout', { generation: 2 }, { state: 'consumed', to: 'console', launch: { mode: 'max', reason: 'admission-timeout' } }],
+  ['preflight:unseeded', { generation: 2 }, { state: 'consumed', to: 'console', launch: { mode: 'max', reason: 'preflight:unseeded' } }],
+  ['Console window closed', {}, { to: 'console' }],
+];
+for (const [reason, reg, fields] of failureRows) for (const mode of ['console', 'max']) {
+  test(`A15: ${reason} with ${mode} survivor applies surviving-mode effects`, async t => {
+    const h = await setup(t, { registration: { mode, ...reg } }); h.tail = box;
+    await store.updateMode(() => ({ until: iso(-1) }), h.opts);
+    await store.updateRequest(H, () => request({ to: 'max', ...fields }), h.opts);
+    if (reason === 'successor session not confirmed') h.session({ sessionId: 'other', status: 'idle' });
+    await h.run(); const m = store.readMode(h.opts);
+    assert.match(m.lastError, new RegExp(reason)); assert.equal(store.readRequest(H, h.opts), null);
+    assert.deepEqual(m.noSwitch, mode === 'max' ? [retryKey] : []);
+    assert.deepEqual(m.switchBackRetry, mode === 'console' ? { [retryKey]: retryEntry() } : {});
+    assert.deepEqual(h.sends(), []);
+  });
+}
+for (const survivor of ['dead', 'missing']) test(`A15: wrapper ownership lost with ${survivor} W records no block or retry`, async t => {
+  const h = await consoleSetup(t); h.tail = box;
+  await store.updateRequest(H, () => request({ to: 'max' }), h.opts);
+  if (survivor === 'dead') h.alive.delete(1001); else store.releaseHandle(H, 1001, h.opts);
+  await h.run(); assert.equal(store.readRequest(H, h.opts), null);
+  assert.deepEqual(store.readMode(h.opts).noSwitch, []); assert.deepEqual(store.readMode(h.opts).switchBackRetry, {});
+});
+test('A15: unconfirmed Console successor recovers only at the thirty-minute retry boundary', async t => {
+  const h = await setup(t, { registration: { mode: 'console', generation: 2, launchedAt: iso(-10) } }); h.tail = box;
+  await store.updateMode(() => ({ until: iso(-1) }), h.opts);
+  await store.updateRequest(H, () => request({ state: 'consumed', launch: { mode: 'console', reason: 'ok' } }), h.opts);
+  h.session({ sessionId: 'other', status: 'idle' }); await h.run();
+  assert.deepEqual(store.readMode(h.opts).switchBackRetry, { [retryKey]: retryEntry() });
+  h.session(); h.now = new Date(+NOW + 30 * 60_000 - 1); await h.run(); assert.equal(store.readRequest(H, h.opts), null);
+  h.now = new Date(iso(30)); await h.run(); const q = store.readRequest(H, h.opts);
+  assert.equal(q?.to, 'max'); assert.equal(q.reason, 'reset'); assert.equal(q.generation, 2);
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+});
+for (const blocker of ['busy', 'draft', 'already Max', 'replacement W']) test(`A15: retry boundary with ${blocker} sends nothing`, async t => {
+  const h = await consoleSetup(t); h.tail = box;
+  await store.updateMode(() => ({ until: iso(-1), switchBackRetry: { [retryKey]: retryEntry() } }), h.opts);
+  h.now = new Date(iso(30));
+  if (blocker === 'busy') h.session({ sessionId: 's1', status: 'busy' });
+  if (blocker === 'draft') h.draft = 'keep';
+  if (blocker === 'already Max') { h.r.mode = 'max'; store.updateRegistration(h.r, h.opts); }
+  if (blocker === 'replacement W') {
+    store.releaseHandle(H, 1001, h.opts); h.r.wrapperPid = 2001; h.r.mode = 'max'; h.alive.add(2001); store.updateRegistration(h.r, h.opts);
+  }
+  await h.run(); assert.equal(store.readRequest(H, h.opts), null); assert.deepEqual(h.sends(), []);
+  assert.deepEqual(store.readMode(h.opts).switchBackRetry, blocker === 'replacement W' ? {} : { [retryKey]: retryEntry() });
+});
+test('A15: an entry blocks a switch to Console even after nextAt', () => {
+  const i = input(); i.mode.switchBackRetry = { [retryKey]: retryEntry(1, iso(-1)) };
+  const p = planOverflow(i); assert.deepEqual(p.switches, []); assert.ok(p.mode.switchBackRetry[retryKey]);
+});
+test('A15: four billing failures pin the wrapper, warn once, and never create a fifth request', async t => {
+  const h = await consoleSetup(t); h.sendFailure = true;
+  for (let failure = 1; failure <= 4; failure++) {
+    const start = (failure - 1) * 36;
+    for (const offset of [0, 2, 4]) { h.now = new Date(iso(start + offset)); await h.run(); }
+    assert.equal(store.readRequest(H, h.opts)?.attempts, 3);
+    h.now = new Date(iso(start + 6)); await h.run(); assert.equal(store.readRequest(H, h.opts), null);
+    const m = store.readMode(h.opts);
+    assert.deepEqual(m.switchBackRetry[retryKey], retryEntry(failure, iso(start + 36), failure === 4 ? iso(start + 6) : null));
+    assert.deepEqual(m.noSwitch, failure === 4 ? [retryKey] : []);
+    h.now = new Date(iso(start + 35)); await h.run(); assert.equal(store.readRequest(H, h.opts), null);
+  }
+  h.now = new Date(iso(200)); await h.run(); await h.run();
+  assert.equal(store.readRequest(H, h.opts), null); assert.equal(h.sends().length, 12);
+  const warnings = h.logs.filter(([level, line]) => level === 'warn' && line.includes('stuck'));
+  assert.equal(warnings.length, 1); assert.match(warnings[0][1], new RegExp(`${H}.*4`));
+});
+test('A15: confirmed Max retry clears only its own entry', async t => {
+  const h = await consoleSetup(t); h.tail = box;
+  await store.updateMode(() => ({ until: iso(-1), switchBackRetry: { [retryKey]: retryEntry(2, iso(-1)) } }), h.opts);
+  await h.run(); assert.equal(store.readRequest(H, h.opts)?.to, 'max');
+  await successor(h, { mode: 'max', reason: 'ok' }); h.now = new Date(iso(1));
+  // Preserve a second wrapper's entry through the confirmation's mode update.
+  store.updateRegistration({ ...h.r, handle: 'term_other' }, h.opts);
+  await store.updateMode(m => ({ switchBackRetry: { ...m.switchBackRetry, 'term_other:1001': retryEntry() } }), h.opts);
+  await h.run(); assert.equal(store.readRequest(H, h.opts), null);
+  assert.deepEqual(store.readMode(h.opts).switchBackRetry, { 'term_other:1001': retryEntry() });
+});
+test('A15: session supersede preserves the retry series and allows the next request immediately', async t => {
+  const h = await consoleSetup(t); h.tail = box;
+  const entry = retryEntry(2, iso(-1));
+  await store.updateMode(() => ({ until: iso(-1), switchBackRetry: { [retryKey]: entry } }), h.opts);
+  await h.run(); h.r.sessionId = 's2'; store.updateRegistration(h.r, h.opts); h.session(); h.now = new Date(iso(3));
+  await h.run(); assert.equal(store.readRequest(H, h.opts), null);
+  assert.deepEqual(store.readMode(h.opts).switchBackRetry, { [retryKey]: entry });
+  await h.run(); assert.equal(store.readRequest(H, h.opts).sessionId, 's2'); assert.equal(h.sends().length, 2);
+});
+for (const previous of [0, 3]) for (const step of [1, 2, 3]) test(`A15: counted failure ${previous + 1} replays the same entry after crash at A3 step ${step}`, async t => {
+  const h = await consoleSetup(t); h.tail = box;
+  await store.updateRequest(H, () => request({ to: 'max', sentAt: iso(-3), attempts: 3 }), h.opts);
+  if (previous) await store.updateMode(() => ({ switchBackRetry: { [retryKey]: retryEntry(previous, iso(-1)) } }), h.opts);
+  const expected = retryEntry(previous + 1, iso(30), previous === 3 ? iso(0) : null);
+  const original = h.events();
+  await assert.rejects(h.run(false, { overflow: { afterOutcomeStep: n => { if (n === step) throw new Error('crash'); } } }), /crash/);
+  const recorded = store.readRequest(H, h.opts);
+  assert.deepEqual(recorded.outcome.effects.switchBackRetry, { [retryKey]: expected });
+  h.now = new Date(iso(5)); await h.run();
+  assert.deepEqual(store.readMode(h.opts).switchBackRetry, { [retryKey]: expected });
+  assert.deepEqual(store.readMode(h.opts).noSwitch, previous === 3 ? [retryKey] : []); assert.deepEqual(h.events(), original);
+  assert.equal(store.readRequest(H, h.opts), null); assert.deepEqual(h.sends(), []);
+  await store.updateRequest(H, () => recorded, h.opts); await h.run();
+  assert.deepEqual(store.readMode(h.opts).switchBackRetry, { [retryKey]: expected });
+  assert.equal(h.logs.filter(([level, line]) => level === 'warn' && line.includes('stuck')).length, previous === 3 ? 1 : 0);
+});
+for (const action of ['billing switch', 'counted failure', 'pinned failure']) test(`A14/A15: dry-run ${action} leaves every state byte unchanged`, async t => {
+  const h = await consoleSetup(t);
+  if (action !== 'billing switch') await store.updateRequest(H, () => request({ to: 'max', sentAt: iso(-3), attempts: 3, reason: 'billing' }), h.opts);
+  if (action === 'pinned failure') await store.updateMode(() => ({ switchBackRetry: { [retryKey]: retryEntry(3, iso(-1)) } }), h.opts);
+  const before = tree(h.stateDir); await h.run(true);
+  assert.deepEqual(tree(h.stateDir), before); assert.deepEqual(h.sends(), []);
+});
+test('DOG-86: an older busy Max trigger does not consume the Console admission slot', () => {
+  const i = input(), b = registration({ handle: 'term_B', wrapperPid: 2001, claudePid: 2002 });
+  i.registrations.push(b); i.listedHandles.push(b.handle); i.facts.alive.add(2001).add(2002); i.facts.foreground.add(b.handle);
+  i.sessions.get('/fake/config:1002').status = 'busy';
+  i.sessions.set('/fake/config:2002', { sessionId: 's1', status: 'idle' });
+  i.events[b.handle] = event({ handle: b.handle, detectedAt: iso(-10) }); i.observations.set(b.handle, i.observations.get(H));
+  const p = planOverflow(i);
+  assert.deepEqual(p.switches.map(({ handle, to }) => ({ handle, to })), [{ handle: b.handle, to: 'console' }]);
+  assert.deepEqual(p.idleHolds, [{ handle: H, status: 'busy' }]);
+});
+
+for (const width of [80, 100]) test(`A16: wrapped billing URL under a side panel at column ${width} marks and switches`, async t => {
+  const h = await consoleSetup(t);
+  const rows = ['', '', '', '', '', '',
+    '  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/settings/billing']
+    .map(text => text.padEnd(width) + '││ task status');
+  h.tail = [...rows, ...billingFooter]; await h.run();
+  assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+  const q = store.readRequest(H, h.opts);
+  assert.equal(q?.to, 'max'); assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+});
+
+for (const location of ['chat', 'panel']) test(`A14: side-panel geometry preserves only ${location === 'chat' ? 'chat billing' : 'non-billing chat'}`, async t => {
+  const h = await consoleSetup(t);
+  const rows = Array.from({ length: 8 }, (_, n) => {
+    const chat = location === 'chat' && n === 6 ? billingLine : '';
+    const panel = location === 'panel' && n === 7 ? billingLine : 'task status';
+    return chat.padEnd(120) + '││ ' + panel;
+  });
+  h.tail = [...rows, ...billingFooter]; await h.run();
+  assert.equal(store.readMode(h.opts).creditExhaustedUntil, location === 'chat' ? '2026-12-01T00:00:00.000Z' : null);
+  assert.equal(store.readRequest(H, h.opts)?.reason ?? null, location === 'chat' ? 'billing' : null);
+  assert.equal(h.sends().length, location === 'chat' ? 1 : 0);
 });
