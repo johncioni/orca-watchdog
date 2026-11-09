@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile, spawn, spawnSync } from 'node:child_process';
+import childProcess, { execFile, spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import { syncBuiltinESMExports } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,8 +20,12 @@ function executable(file, contents) {
 }
 
 function harness(prefix = 'wd management ') {
-  const base = prefix === 'ova4' ? spawnSync('mktemp', ['-d', '/tmp/ova4.XXXXXX'], { encoding: 'utf8' }).stdout.trim()
-    : fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  let base;
+  if (prefix === 'ova4') {
+    const temp = spawnSync('mktemp', ['-d', '/tmp/ova4.XXXXXX'], { encoding: 'utf8' });
+    assert.equal(temp.status, 0, temp.stderr);
+    base = temp.stdout.trim();
+  } else base = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const home = path.join(base, 'Home with spaces & ü');
   const fakeBin = path.join(base, 'fake bin');
   const launchctlState = path.join(base, 'launchctl.registered');
@@ -716,4 +721,30 @@ test('A15: status and doctor alert only on a live Console survivor without chang
   for (const command of [['overflow', 'status'], ['doctor']]) assert.doesNotMatch((await capture(command)).text, /stuck on Console credit/);
   state.releaseHandle('pane', process.pid, opts);
   for (const command of [['overflow', 'status'], ['doctor']]) assert.doesNotMatch((await capture(command)).text, /stuck on Console credit/);
+});
+
+test('A16: doctor reports unreadable overflow registrations without throwing', async t => {
+  const h = harness('ova4'); t.after(h.cleanup);
+  const { doctorText, runCli } = await loadManagement(), state = await import('./lib/overflow-state.mjs');
+  const registrationsDir = state.overflowPaths(h.home).registrationsDir;
+  fs.mkdirSync(path.dirname(registrationsDir), { recursive: true });
+  fs.writeFileSync(registrationsDir, 'preserve malformed metadata');
+  const report = doctorText({ env: h.env });
+  assert.equal(report.failed, true);
+  assert.equal(report.text.split('\n').filter(line => /^overflow registrations: error \(ENOTDIR/.test(line)).length, 1);
+  let text = '';
+  assert.equal(await runCli(['doctor'], { env: h.env, stdout: { write: value => { text += value; } } }), 1);
+  assert.match(text, /overflow registrations: error \(ENOTDIR/);
+  assert.equal(fs.readFileSync(registrationsDir, 'utf8'), 'preserve malformed metadata');
+});
+test('A16: ova4 harness rejects failed mktemp before creating its fake home', async t => {
+  const temp = spawnSync('mktemp', ['-d', '/tmp/ova4.XXXXXX'], { encoding: 'utf8' });
+  assert.equal(temp.status, 0, temp.stderr);
+  const base = temp.stdout.trim(); t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const fake = t.mock.method(childProcess, 'spawnSync', () => ({ status: 1, stdout: base, stderr: 'mktemp failed' }));
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => harness('ova4'), { name: 'AssertionError', actual: 1, expected: 0 });
+    assert.equal(fs.existsSync(path.join(base, 'Home with spaces & ü')), false);
+  } finally { fake.mock.restore(); syncBuiltinESMExports(); }
 });

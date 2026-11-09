@@ -15,7 +15,7 @@ const limit = hour => [`Claude usage limit reached. Your limit will reset at ${h
 const outage = ['⎿ API Error: 529 overloaded_error', ...box];
 // Claude 2.1.319 bundle wording; unverified live (spike item 6).
 const console429 = ['⎿ API Error: Request rejected (429) · this may be a temporary capacity issue.', ...box];
-const billing = ['⎿ Credit balance too low · Add funds: https://platform.claude.com/settings/billing', ...box];
+const billing = ['  ⎿  Credit balance too low · Add funds: https://platform.claude.com/settings/billing', ...box];
 function observed(lines, now = NOW) {
   const b = detectBanner(lines, 'claude', now);
   return { ...b, platform: 'claude', resetAt: parseResetTime(b.bannerText, now)?.toISOString() ?? null, parsedReset: true };
@@ -562,15 +562,15 @@ for (const blocker of ['noSwitch', 'credit', 'session', 'ineligible', 'backgroun
   await h.run(); assert.equal(h.logs.filter(([, message]) => message.includes('pid-file status')).length, 0);
 });
 
-// A14 screens combine spike item 6's sighted billing line with the closed input
-// box/footer in watchdog.test.mjs's CLAUDE_WIDE_OPUS_CAPTURE. No captured billing
+// A16 screens use spike item 6's sighted billing text, CLAUDE_SESSION_LIMIT_*
+// indentation/wrap, DOG-77 goal markers and the closed input box/footer. No captured billing
 // screen exists yet; Task 6 will capture it with and without a goal.
 const billingFooter = ['─'.repeat(128), '❯', '─'.repeat(128),
   '  [Opus 4.8 (1M context) ◕ xhigh] │ project git:(main) │ ⏱️   <1m',
   '  Context █░░░░░░░░░ 7% │ Usage ██░░░░░░░░ 23% (resets in 4h 32m)',
   '  2 CLAUDE.md | 1 MCPs | 15 hooks', '  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent'];
-const billingLine = '⎿  Credit balance too low · Add funds: https://platform.claude.com/settings/billing';
-const goalCleared = 'Goal cleared after an unrecoverable error (credit balance too low)';
+const billingLine = '  ⎿  Credit balance too low · Add funds: https://platform.claude.com/settings/billing';
+const goalCleared = '⏺ Goal cleared after an unrecoverable error (credit balance too low)';
 const billingScreen = (...after) => [billingLine, ...after, ...billingFooter];
 const retryKey = `${H}:1001`;
 const retryEntry = (failures = 1, nextAt = iso(30), stuckAt = null) => ({ failures, nextAt, stuckAt });
@@ -586,17 +586,80 @@ for (const after of [[], [goalCleared], ['', '✻ Cooked for 21m 11s · done 8:5
     assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
   });
 }
+const billingBlocks = [
+  ['same-line URL', [billingLine]],
+  ['column-5 URL', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/settings/billing']],
+  ['two column-5 URL lines', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/settings/', '     billing']],
+  ['partial same-line URL', ['  ⎿  Credit balance too low · Add funds: https://platform.', '     claude.com/settings/', '     billing']],
+];
+const goalNotices = [
+  ['no notice', []],
+  ['marked notice', [goalCleared]],
+  ['wrapped marked notice', ['⏺ Goal cleared after an unrecoverable error', '(credit balance too low)']],
+  ['response notice', ['  ⎿  Goal cleared after an unrecoverable error (credit balance too low)']],
+  ['wrapped response notice', ['  ⎿  Goal cleared after an unrecoverable error', '     (credit balance too low)']],
+  ['bare notice', [goalCleared.slice(2)]],
+  ['wrapped bare notice', ['Goal cleared after an unrecoverable error', '(credit balance too low)']],
+];
+for (const [shape, block] of billingBlocks) for (const [notice, after] of goalNotices) {
+  test(`A16: ${shape} with ${notice} marks and switches`, async t => {
+    const h = await consoleSetup(t); h.tail = [...block, ...after, ...billingFooter]; await h.run();
+    assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+    const q = store.readRequest(H, h.opts);
+    assert.equal(q?.to, 'max'); assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+    assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+  });
+}
+for (const [name, line] of [
+  ['column-0', billingLine.trimStart()],
+  ['deeper indent', `       ${billingLine.trimStart()}`],
+  ['exact tool-result residual', billingLine],
+  ['different URL residual', '  ⎿  Credit balance too low · Add funds: https://example.com/billing'],
+]) test(`A16: ${name} marks and switches`, async t => {
+  const h = await consoleSetup(t); h.tail = [line, ...billingFooter]; await h.run();
+  assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+  const q = store.readRequest(H, h.opts);
+  assert.equal(q?.to, 'max'); assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
+});
+const staleBillingOutput = [
+  ['column-5 retry', ['     Retrying in 5s… (attempt 2/10)']],
+  ['column-2 retry', ['  Retrying in 5s… (attempt 2/10)']],
+  ['bare Console 429', ['     API Error: Request rejected (429) · this may be a temporary capacity issue.']],
+  ['tool summary', ['     Read 1 file']],
+  ['Done token', ['     Done.']],
+  ['bare marker', ['     ⏺']],
+  ['words', ['     Add more funds to continue']],
+  ['answer', ['⏺ Work continued']],
+  ['other goal notice', ['⏺ Goal still active · retrying']],
+  ['prompt and column-2 Console 429', ['❯ try again', '  ⎿  API Error: Request rejected (429) · this may be a temporary capacity issue.']],
+  ['token after completed URL', ['     billing']],
+];
 const nonBillingScreens = [
-  ['answer quote', [`⏺ The error says ${billingLine.slice(3)}`, ...billingFooter]],
-  ['tool result', [`  ${billingLine}`, ...billingFooter]],
-  ['tool prefix', [`⎿ Tool output: ${billingLine.slice(3)}`, ...billingFooter]],
+  ...billingBlocks.flatMap(([shape, block]) => staleBillingOutput.map(([name, after]) =>
+    [`${shape}: ${name}`, [...block, ...after, ...billingFooter]])),
+  ['missing URL', ['  ⎿  Credit balance too low · Add funds:', ...billingFooter]],
+  ['missing URL with non-URL token', ['  ⎿  Credit balance too low · Add funds:', '     Done.', ...billingFooter]],
+  ['URL incomplete after two lines', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.', '     claude.com/settings/', ...billingFooter]],
+  ['URL needs three lines', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.', '     claude.com/settings/', '     billing', ...billingFooter]],
+  ['URL at wrong indent', ['  ⎿  Credit balance too low · Add funds:', '  https://platform.claude.com/settings/billing', ...billingFooter]],
+  ['URL containing whitespace', ['  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/ settings/billing', ...billingFooter]],
+  ['wrapped different URL', ['  ⎿  Credit balance too low · Add funds:', '     https://example.com/billing', ...billingFooter]],
+  ['interrupted goal notice', billingScreen('⏺ Goal cleared after an unrecoverable error', '', '(credit balance too low)')],
+  ['three-line goal notice', billingScreen('⏺ Goal cleared after an', 'unrecoverable error', '(credit balance too low)')],
+  ['answer quote', [`⏺ The error says ${billingLine.slice(5)}`, ...billingFooter]],
+  ['tool prefix', [`  ⎿  Tool output: ${billingLine.slice(5)}`, ...billingFooter]],
   ['later answer', billingScreen('⏺ Work continued')],
   ['prompt and Console 429', billingScreen('❯ try again', console429[0])],
   ['retry line', billingScreen('Retrying in 2 seconds…')],
   ['plain prose', billingScreen('Work continued')],
   ['footer quote', [...billingFooter, billingLine]],
 ];
-for (const [name, screen] of nonBillingScreens) for (const phase of ['observation', 'fresh read', 'resend']) {
+for (const [name, screen] of nonBillingScreens) for (const [phase, expected] of [
+  ['observation', { credit: null, request: null, exits: 0 }],
+  ['fresh read', { credit: '2026-12-01T00:00:00.000Z', request: null, exits: 0 }],
+  ['resend', { credit: '2026-12-01T00:00:00.000Z', request: { to: 'max', reason: 'billing', attempts: 1 }, exits: 1 }],
+]) {
   test(`A14: ${name} is not current billing at ${phase}`, async t => {
     const h = await consoleSetup(t);
     if (phase === 'resend') {
@@ -607,8 +670,10 @@ for (const [name, screen] of nonBillingScreens) for (const phase of ['observatio
     else h.onWait = () => { waited = true; h.tail = screen; };
     const before = store.readRequest(H, h.opts); await h.run();
     if (phase !== 'observation') assert.equal(waited, true);
-    assert.deepEqual(store.readRequest(H, h.opts), before); assert.equal(h.sends().length, phase === 'resend' ? 1 : 0);
-    assert.equal(store.readMode(h.opts).creditExhaustedUntil, phase === 'observation' ? null : '2026-12-01T00:00:00.000Z');
+    const q = store.readRequest(H, h.opts); assert.deepEqual(q, before);
+    assert.deepEqual(q && { to: q.to, reason: q.reason, attempts: q.attempts }, expected.request);
+    assert.equal(h.sends().filter(a => a[5] === '/exit').length, expected.exits);
+    assert.equal(store.readMode(h.opts).creditExhaustedUntil, expected.credit);
   });
 }
 for (const blocker of ['busy', 'draft', 'noSwitch', 'retry hold', 'session disagreement']) {
@@ -623,6 +688,26 @@ for (const blocker of ['busy', 'draft', 'noSwitch', 'retry hold', 'session disag
     assert.equal(store.readRequest(H, h.opts), null); assert.deepEqual(h.sends(), []);
   });
 }
+for (const recovery of ['next tick', 'during the read', 'only on recheck']) test(`A16: billing request holds across ps timeout with recovery ${recovery}`, async t => {
+  const h = await consoleSetup(t); h.sendFailure = true;
+  await h.run(); const q = store.readRequest(H, h.opts);
+  assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+  h.now = new Date(iso(3)); h.ps = new Error('ps timed out');
+  if (recovery === 'during the read') h.onCall = args => { if (args[1] === 'read') h.ps = '1001 1001 ttys099'; };
+  if (recovery === 'only on recheck') {
+    h.ps = '1001 1001 ttys099'; h.tail = billingScreen('⏺ Work continued');
+    h.onCall = args => { if (args[1] === 'read') h.ps = new Error('ps timed out'); };
+  }
+  const outcomes = [];
+  await h.run(false, { overflow: { afterOutcomeStep: step => { if (step === 1) outcomes.push(store.readRequest(H, h.opts).outcome); } } });
+  assert.deepEqual(outcomes, []); assert.deepEqual(store.readRequest(H, h.opts), q);
+  assert.equal(h.sends().length, 1); assert.deepEqual(store.readMode(h.opts).switchBackRetry, {});
+  h.onCall = null; h.tail = billingScreen(); h.ps = '1001 1001 ttys099'; h.sendFailure = false; await h.run();
+  const retried = store.readRequest(H, h.opts);
+  assert.equal(retried?.createdAt, q.createdAt); assert.equal(retried?.attempts, 2);
+  assert.equal(retried?.reason, 'billing'); assert.equal(retried?.sentAt, iso(3));
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit', '/exit']);
+});
 for (const variant of ['cleared', 'failed read', 'due', 'inside window', 'session changed']) {
   test(`A14: billing request after restart with ${variant}`, async t => {
     const h = await consoleSetup(t);

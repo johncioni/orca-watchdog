@@ -1337,10 +1337,31 @@ function overflowBilling(tail) {
   const source = stripSidePanel(tail).slice(-TAIL_LINES).map(line => stripAnsi(line).slice(0, WINDOW_LINE_MAX));
   const window = source.map(line => line.trim()), footer = footerStartFor('claude', window);
   const end = footer < 0 ? window.length : footer - 2;
-  return source.slice(0, end).some((line, index) => /^⎿\s+Credit balance too low · Add funds:/.test(line)
-    && window.slice(index + 1, end).every(line => line === ''
-      || providerFor('claude').chrome.trailing.some(re => re.test(line))
-      || line === 'Goal cleared after an unrecoverable error (credit balance too low)'));
+  const url = 'https://platform.claude.com/settings/billing';
+  const notice = 'Goal cleared after an unrecoverable error (credit balance too low)';
+  return source.slice(0, end).some((line, index) => {
+    const match = /^(\s*⎿\s+)Credit balance too low · Add funds:(.*)$/.exec(line);
+    if (!match) return false;
+    let rest = match[2].replace(/\s/g, ''), next = index + 1;
+    if (rest !== url && url.startsWith(rest)) {
+      for (let count = 0; count < 2 && next < end && rest !== url; count++) {
+        const continuation = /^(\s*)(\S+)$/.exec(source[next]);
+        if (!continuation || continuation[1].length !== match[1].length
+          || !url.startsWith(rest + continuation[2])) break;
+        rest += continuation[2]; next++;
+      }
+      if (rest !== url) return false;
+    } else if (!/^https:\/\/\S+$/.test(rest)) return false;
+    for (; next < end; next++) {
+      const text = window[next];
+      if (text === '' || providerFor('claude').chrome.trailing.some(re => re.test(text))) continue;
+      const goal = text.replace(/^[⏺⎿]\s+/, '');
+      if (goal === notice) continue;
+      if (next + 1 < end && `${goal} ${window[next + 1]}` === notice) { next++; continue; }
+      return false;
+    }
+    return true;
+  });
 }
 
 async function applyOverflow({ context, observations, events, sendCandidates, byHandle, now, dryRun, deps, saveCapture }) {
@@ -1493,7 +1514,7 @@ async function applyOverflow({ context, observations, events, sendCandidates, by
       const freshBanner = detectBanner(read.tail, 'claude', at, { consoleRows: r.mode === 'console' });
       const freshObservations = new Map(observations);
       freshObservations.set(handle, { read: true, banner: overflowBanner(freshBanner, 'claude', at),
-        billing: r.mode === 'console' && overflowBilling(read.tail) });
+        billing: r.mode === 'console' ? overflowBilling(read.tail) : null });
       const requests = new Map(context.requests);
       if (q) requests.set(handle, q); else requests.delete(handle);
       const freshMode = overflowState.readMode(ov);
@@ -1581,7 +1602,7 @@ export async function tick({ dryRun }, depsIn = {}) {
         const consoleRows = consoleHandles.has(t.handle);
         const readAt = deps.now();
         const banner = detectBanner(tail, inferPlatform(t), readAt, { consoleRows });
-        overflowObservations.set(t.handle, { read: true, banner: overflowBanner(banner, inferPlatform(t, banner), readAt), billing: consoleRows && overflowBilling(tail) });
+        overflowObservations.set(t.handle, { read: true, banner: overflowBanner(banner, inferPlatform(t, banner), readAt), billing: consoleRows ? overflowBilling(tail) : null });
         if (!banner && shouldLog('debug') && hasOutageLine(tail, { consoleRows })) {
           const blocker = classifyOutageNearMiss(tail, inferPlatform(t), { consoleRows });
           if (blocker !== null) {
