@@ -68,7 +68,13 @@ is restored, `noSwitch` has no entry for the wrapper, and `lastError`
 names `session-changed`. With the switch-back still due and `s2` idle,
 the following tick creates a request naming `s2` and sends `/exit` once.
 A variant where the pid file says `s2` but the registration still says
-`s1` holds (no supersede, no `/exit`) until they agree.
+`s1` holds (no supersede, no `/exit`) until they agree. Two `to: console`
+cases pin the precedence: with the session moved to `s2` and, on the
+same tick, the deadline already passed (one case) or credit marked
+exhausted (the other), the outcome is supersede (snapshot restored, no
+`noSwitch` entry, no `/exit`), not the cancel those rows would give. And
+the same changed-session input inside `RELAUNCH_WINDOW_MS` holds (no
+supersede, no `/exit`).
 
 ## A13 (Task 4): the `/exit` send under the request lock is time-bounded
 
@@ -108,4 +114,8 @@ that call, carries `SWITCH_SEND_TIMEOUT_MS`; a send that rejects as timed
 out leaves the record `pending` with its counted attempt and the request
 lock released (a forked process's `updateRequest` on the real Task 2 lock
 then succeeds, coordinated by IPC barriers, never a real wait), and the
-next tick past `RELAUNCH_WINDOW_MS` resends.
+next tick past `RELAUNCH_WINDOW_MS` resends. A second test goes through
+the daemon's production `orca()` function with only its `execFile`
+boundary replaced: the exec options carry `timeout: 5000` for the
+`/exit` send and the unchanged `timeout: 15000` for a call without the
+override.
