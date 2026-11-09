@@ -57,7 +57,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
   const paths = overflowPaths(home), opts = { home, timeoutS: deps.flockTimeoutS }, handle = env.ORCA_TERMINAL_HANDLE;
   const claude = env.CLAUDE_OVERFLOW_CLAUDE || 'claude';
   const parsed = parseClaudeArgv(argv), maxDir = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
-  let child = null, stopped = null, owned = false, entry, pollTimer;
+  let child = null, stopped = null, owned = false, entry, pollTimer, publishedSessionId;
   let wakeStop;
   const stopPromise = new Promise(resolve => { wakeStop = resolve; });
   const stop = signal => {
@@ -85,13 +85,17 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
       if (onSpawn && child.pid) onSpawn(child.pid);
     });
   }
+  function publishRegistration() {
+    updateRegistration(entry, opts);
+    publishedSessionId = entry.sessionId;
+  }
   function pollSession() {
     if (!entry?.claudePid) return;
     try {
       const value = JSON.parse(fs.readFileSync(path.join(entry.configDir, 'sessions', `${entry.claudePid}.json`), 'utf8'));
-      if (typeof value.sessionId === 'string' && value.sessionId && value.sessionId !== entry.sessionId) {
-        updateRegistration({ ...entry, sessionId: value.sessionId }, opts);
+      if (typeof value.sessionId === 'string' && value.sessionId) {
         entry.sessionId = value.sessionId;
+        if (entry.sessionId !== publishedSessionId) publishRegistration();
       }
     } catch { /* Claude removes its pid file before exit; retain the last observation. */ }
   }
@@ -105,6 +109,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
         claudePid: null, sessionId: parsed.sessionId || randomUUID(), configDir: maxDir, mode: 'max',
         eligible: false, model: null, launchedAt: now().toISOString(), cwd: process.cwd(), ...identity };
       owned = await claimHandle(entry, opts);
+      if (owned) publishedSessionId = entry.sessionId;
       if (!owned) report(`cannot claim terminal ${handle}: another wrapper owns the handle or ownership is uncertain`);
     } catch (error) { report(`cannot claim terminal ${handle}: ${error.message}`); owned = false; }
     if (!owned) return await runChild(argv, env);
@@ -139,7 +144,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
     function registerLaunch(choice) {
       Object.assign(entry, { generation, claudePid: null, mode: choice.mode, model: choice.model, eligible: choice.eligible,
         configDir: choice.mode === 'console' ? paths.consoleDir : maxDir, launchedAt: now().toISOString() });
-      updateRegistration(entry, opts);
+      publishRegistration();
     }
     while (!stopped) {
       let choice = null;
@@ -173,7 +178,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
       const prompt = message === null ? [] : [...(message.startsWith('-') ? ['--'] : []), message];
       const args = [...keep, selector, entry.sessionId, ...prompt];
       const code = await runChild(args, childEnv, pid => {
-        entry.claudePid = pid; updateRegistration(entry, opts);
+        entry.claudePid = pid; publishRegistration();
         pollTimer = every(pollSession, SESSION_POLL_MS);
       });
       if (pollTimer) { clear(pollTimer); pollTimer = null; }

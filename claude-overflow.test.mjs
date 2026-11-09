@@ -224,6 +224,20 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
     assert.equal(registration(opts).sessionId, 's2');
     await finish(w);
   });
+  test('failed session registration still refuses a stale request after the pid file is removed', async t => {
+    const opts = fixture(t), w = launch(t, opts, ['--model', 'opus', '--session-id', 's1']); await w.next('ready');
+    await consoleWindow(opts); await request(opts, { sessionId: 's1' });
+    w.command({ type: 'session', sessionId: 's2' }); await w.next('session');
+    await w.clock(start + 5000, false, true);
+    assert.equal(registration(opts).sessionId, 's1');
+    w.command({ type: 'exit', code: 0 });
+    const result = await w.next(['finished', 'ready']);
+    assert.equal(result.type, 'finished'); await w.exited;
+    assert.notEqual(result.code, 0);
+    assert.match(w.stderr(), /request session s1 differs from current session s2; no relaunch/);
+    assert.equal(logs(opts).length, 1);
+    assert.equal(state.readRequest('pane', opts).state, 'pending');
+  });
   for (const changed of [false, true]) test(`session mismatch at exit leaves request pending and logs both IDs${changed ? ' after final pid read' : ''}`, async t => {
     const opts = fixture(t), w = launch(t, opts, ['--model', 'opus', '--session-id', 's1']); await w.next('ready');
     await request(opts, { sessionId: changed ? 's1' : 's3' });
