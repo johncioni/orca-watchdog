@@ -6,6 +6,8 @@ All notable changes to Orca Watchdog are documented here.
 
 ### Fixed
 
+- Switch Console sessions stalled on a current billing error back to Max, even before the Max reset. Ignore quoted or stale billing errors, and stop retrying a pending billing switch once the session moves on. (DOG-83)
+- Retry failed account switches that leave a session on Console after 30 minutes. After four consecutive failures, stop retrying and show a stuck-on-Console alert in `overflow status` and `doctor`. (DOG-84)
 - Retry a failed Claude session registration write on the next poll, so a session changed by `/clear` or `/resume` cannot leave account switches waiting indefinitely. (DOG-85)
 
 ## 1.3.0 - 2026-11-09

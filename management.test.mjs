@@ -19,7 +19,8 @@ function executable(file, contents) {
 }
 
 function harness(prefix = 'wd management ') {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const base = prefix === 'ova4' ? spawnSync('mktemp', ['-d', '/tmp/ova4.XXXXXX'], { encoding: 'utf8' }).stdout.trim()
+    : fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const home = path.join(base, 'Home with spaces & ü');
   const fakeBin = path.join(base, 'fake bin');
   const launchctlState = path.join(base, 'launchctl.registered');
@@ -663,7 +664,7 @@ test('overflow clear-credit nulls only creditExhaustedUntil and keeps evidence',
   const { updateMode, readMode } = await import('./lib/overflow-state.mjs');
   const opts = { home: h.home };
   const before = await updateMode(() => ({ until: '2099-01-01T00:00:00Z', creditExhaustedUntil: '2099-02-01T00:00:00Z',
-    lastError: 'keep error', noSwitch: ['pane:1'], evidence: { pane: { resetAt: '2099-01-01T00:00:00Z' } } }), opts);
+    lastError: 'keep error', noSwitch: ['pane:1'], switchBackRetry: { 'pane:1': { failures: 1, nextAt: '2099-01-01T00:00:00Z', stuckAt: null } }, evidence: { pane: { resetAt: '2099-01-01T00:00:00Z' } } }), opts);
   assert.equal(await runCli(['overflow', 'clear-credit'], { env: h.env, stdout: { write() {} } }), 0);
   assert.deepEqual(readMode(opts), { ...before, creditExhaustedUntil: null });
 });
@@ -682,4 +683,37 @@ test('overflow status prints launch mode, marks, errors, live registrations and 
   for (const value of ['launch mode: console', 'until: 2099-01-01T00:00:00Z', 'creditExhaustedUntil: none', 'lastError: unseeded cwd',
     'noSwitch: pane:1', 'pane', 'console', 'opus', 'eligible=true', '12345678', 'orphan', 'consumed', 'max']) assert.ok(output.includes(value), value);
   assert.ok(!output.includes('12345678-abcdef'));
+});
+
+test('A15: status and doctor alert only on a live Console survivor without changing doctor exit status', async t => {
+  const h = harness('ova4'); t.after(h.cleanup);
+  const { runCli } = await loadManagement(), state = await import('./lib/overflow-state.mjs');
+  const opts = { home: h.home }, stuckAt = '2026-11-09T12:00:00.000Z';
+  const capture = async command => {
+    let text = ''; const code = await runCli(command, { env: h.env, stdout: { write: value => { text += value; } } });
+    return { text, code };
+  };
+  const baseline = await capture(['doctor']);
+  const dead = spawnSync(process.execPath, ['-e', ''], { env: h.env }); assert.equal(dead.status, 0);
+  const entries = [
+    { handle: 'pane', wrapperPid: process.pid, claudePid: process.pid, mode: 'console' },
+    { handle: 'max', wrapperPid: process.pid, claudePid: process.pid, mode: 'max' },
+    { handle: 'dead', wrapperPid: dead.pid, claudePid: process.pid, mode: 'console' },
+    { handle: 'waiting', wrapperPid: process.pid, claudePid: process.pid, mode: 'console' },
+  ];
+  for (const r of entries) state.updateRegistration(r, opts);
+  const switchBackRetry = Object.fromEntries(entries.map(r => [`${r.handle}:${r.wrapperPid}`,
+    { failures: 4, nextAt: stuckAt, stuckAt: r.handle === 'waiting' ? null : stuckAt }]));
+  switchBackRetry[`missing:${process.pid}`] = { failures: 4, nextAt: stuckAt, stuckAt };
+  await state.updateMode(() => ({ switchBackRetry }), opts);
+  const line = `overflow: pane stuck on Console credit since ${stuckAt} after 4 failed switches to Max; exit Claude in that tab to restart it on Max`;
+  for (const command of [['overflow', 'status'], ['doctor']]) {
+    const result = await capture(command);
+    assert.deepEqual(result.text.split('\n').filter(s => s.includes('stuck on Console credit')), [line]);
+    assert.equal(result.code, command[0] === 'doctor' ? baseline.code : 0);
+  }
+  state.updateRegistration({ ...entries[0], mode: 'max' }, opts);
+  for (const command of [['overflow', 'status'], ['doctor']]) assert.doesNotMatch((await capture(command)).text, /stuck on Console credit/);
+  state.releaseHandle('pane', process.pid, opts);
+  for (const command of [['overflow', 'status'], ['doctor']]) assert.doesNotMatch((await capture(command)).text, /stuck on Console credit/);
 });
