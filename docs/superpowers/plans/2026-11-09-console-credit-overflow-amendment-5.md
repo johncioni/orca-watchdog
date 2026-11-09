@@ -35,20 +35,33 @@ bullets. Everything else in A14 stands.
   line whose text, with leading whitespace removed, starts with `⎿`,
   whitespace, then exactly `Credit balance too low · Add funds:`. Any
   indentation is allowed (Claude draws it at column 2).
-- **Its continuation: the wrapped URL only.** A line directly below the
-  billing line (or below an earlier continuation line) belongs to it only
-  when its first non-blank character is in exactly the column where the
-  billing line's text starts after `⎿` and its whitespace (Claude's
-  hanging indent: column 5 when `⎿` is at column 2), and it contains no
-  whitespace after that indentation. At most 2 such lines. The billing
-  line's text after `Add funds:`, plus those lines, with whitespace
-  removed and joined with no separator, must read `https://` followed by
-  non-whitespace (the wrapped URL), or the billing line is not a billing
-  line. Nothing else is continuation: a line with words in it (a retry
-  line, a Console 429, `Read 1 file`, a hint) or at another indent is
-  ordinary output below the billing line, judged by **Current**. A hint
-  line under the billing error has not been seen; if Task 6's capture
-  shows one, it comes back as an amendment.
+- **Its continuation: the wrapped billing URL only.** Let `U` be
+  `https://platform.claude.com/settings/billing`, the URL spike item 6
+  saw live and in Claude Code's bundle. Let `R` be the billing line's
+  text after `Add funds:` with whitespace removed.
+  - `R` is a URL that is not a proper prefix of `U` (`U` itself, or any
+    other `https://` URL): the line is complete, and nothing below it is
+    continuation.
+  - `R` is empty or a proper prefix of `U` (the line wrapped): lines
+    directly below are consumed one at a time, at most 2, while each has
+    its first non-blank character in exactly the column where the billing
+    line's text starts after `⎿` and its whitespace (Claude's hanging
+    indent: column 5 when `⎿` is at column 2), contains no whitespace
+    after that indentation, and `R` plus the consumed lines, joined with
+    no separator, is still a prefix of `U`. Consumption stops when the
+    joined text equals `U`. If it never equals `U`, the line is not a
+    billing line (fails closed).
+  - Nothing else is continuation. A line after the URL is complete, a
+    token that does not continue `U` (`Done.`, a bare `⏺`), a line with
+    words in it (a retry line, a Console 429, `Read 1 file`, a hint) or
+    a line at another indent is ordinary output below the billing line,
+    judged by **Current**.
+  - Residual, accepted by the orchestrator: if a Claude Code update
+    changes the URL and the line wraps, the billing line is not
+    recognized (no mark, no switch) until this rule is updated; on one
+    line any `https://` URL is still recognized. A hint line under the
+    billing error has not been seen; if Task 6's capture shows one, or a
+    different URL, it comes back as an amendment.
 - **Current.** The billing line is current when every line after its
   continuation, up to the input box, is blank, Claude registry
   `chrome.trailing`, or the goal-cleared notice. The notice is one line,
@@ -88,15 +101,18 @@ expectation is derived from another predicate or from 1.3.0's rule.
   onto a column-0 second line.
 - Not current (no new mark, no request, no `/exit`, at observation,
   fresh read and resend), each directly under the complete billing line
-  and again directly under its wrapped URL line: an indented retry line
-  (`Retrying in 5s… (attempt 2/10)` at column 5 and at column 2); a bare
-  indented `API Error: Request rejected (429) · …` with no prompt before
-  it; an indented `Read 1 file`; a column-5 line with words in it; a
-  `⏺` answer; a `⏺` line that is not the notice; a submitted prompt and
-  a column-2 Console 429.
+  (URL on the same line) and again directly under its wrapped URL line:
+  an indented retry line (`Retrying in 5s… (attempt 2/10)` at column 5
+  and at column 2); a bare indented `API Error: Request rejected (429) ·
+  …` with no prompt before it; an indented `Read 1 file`; a column-5
+  `Done.`; a column-5 bare `⏺`; a column-5 line with words in it; a `⏺`
+  answer; a `⏺` line that is not the notice; a submitted prompt and a
+  column-2 Console 429.
 - Not a billing line at all: the phrase inside a `⏺` answer; the phrase
-  after other text on a `⎿` line; the billing line whose joined URL does
-  not start with `https://`.
+  after other text on a `⎿` line; a billing line ending at `Add funds:`
+  whose next line does not continue `U`; one whose wrapped URL stops
+  short of `U` after 2 lines. And, as the accepted residual, a billing
+  line with a different `https://` URL on the same line is current.
 - A pending `billing` request past the window whose registration fails
   the foreground check this tick, with the billing screen still current:
   holds (no outcome, attempts unchanged); the next valid tick resends.
