@@ -137,6 +137,22 @@ Logs and state live under `~/.local/state/orca-watchdog/`: `watchdog.log`
 (tracked events), and `disabled` (present while paused). State and log files are
 created owner-only (`0600`).
 
+## Claude overflow wrapper
+
+Homebrew also installs `claude-overflow`, which accepts Claude Code’s launch arguments. Overflow is off by default. This release includes the wrapper and shared state; Console setup and the automatic switch controller are still pending.
+
+Run an eligible session with an explicit model:
+
+```bash
+claude-overflow --model claude-opus-5-5 "Continue the implementation"
+```
+
+Without enabled overflow or an Orca terminal handle, the wrapper runs Claude unchanged. When enabled, it tracks Opus and Sonnet sessions by their current session ID. Fable and unresolved models stay on Max. Print mode, unknown options, `--continue`, the resume picker, and forked sessions run without registration.
+
+A matching switch request resumes the same conversation. Console launches use `~/.claude-console`, remove `--advisor`, and disable the advisor tool. Max launches restore the incoming environment and advisor arguments. Both preserve `CLAUDE_CODE_TMPDIR`. Console resumes share one admission slot per minute, including direct `--resume` launches.
+
+A normal `/exit` ends the wrapper unless a matching request was sent within the previous two minutes. Closing the terminal ends it without consuming a request. An unsuccessful switch relaunch gets one fallback on Max; if that fails, the wrapper prints the session ID for manual recovery. It never purchases credits.
+
 ## Update
 
 **Homebrew:**

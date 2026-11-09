@@ -27,6 +27,8 @@ class OrcaWatchdog < Formula
     # Wrap the bundled launcher so it always runs on Homebrew's Node.
     (bin/"orca-watchdog").write_env_script libexec/"bin/orca-watchdog",
       ORCA_WATCHDOG_NODE: formula_opt_bin("node")/"node"
+    (bin/"claude-overflow").write_env_script libexec/"bin/claude-overflow",
+      ORCA_WATCHDOG_NODE: formula_opt_bin("node")/"node"
   end
 
   def caveats
