@@ -13,7 +13,7 @@ change no plan rule (idle status, banner texts, option lists, seed keys)
 are copied into the briefs as the plan's Task 1 says; they are not
 repeated here.
 
-## A1 (Task 4): accepted reset evidence is the next baseline
+## A1 (Tasks 2 and 4): accepted reset evidence is the next baseline
 
 The plan's Trigger rule compares an observation with the stored event's
 banner text, but `reconcile` keeps the old text for a same-kind
@@ -21,18 +21,39 @@ observation (`watchdog.mjs:908-925`), so an accepted later clock is
 re-parsed on every read and lands a day late once past the parser's
 two-hour grace.
 
-Rule: `mode.evidence[handle] = { bannerText, resetAt, acceptedAt }`,
-written with `mode` in phase 2 (not on `--dry-run`). Reset evidence for a
-read observation is, in order: the evidence entry's `resetAt` when the
-normalized banner text equals its `bannerText`; else the stored event's
-`resetAt` when the text equals the event's `bannerText`; else the
-observation's `resetAt`, which then replaces the evidence entry. An entry
-is dropped when the handle has no registration file. `eventSnapshot`
-stays separate and is never updated from evidence.
+Rule: `mode.evidence[handle] = { bannerText, resetAt, acceptedAt,
+episode }`, written with `mode` in phase 2 (not on `--dry-run`).
+`episode` is the `detectedAt` of the handle's stored `limit` event the
+evidence was accepted against. An entry is **live** while either that
+stored event still exists for the handle with the same `detectedAt`, or a
+request for the handle holds an `eventSnapshot` whose limit event has
+that `detectedAt`. Phase 2 drops every entry that is not live, and every
+entry whose handle has no registration file, before evaluating the
+Trigger.
 
-Test: accept changed text, hold the switch with a draft, restart the
-controller, read the same text beyond the two-hour grace: `until` stays
-on the accepted day.
+Reset evidence for a read observation is, in order: a live evidence
+entry's `resetAt` when the normalized banner text equals its
+`bannerText`; else the stored event's `resetAt` when the text equals the
+event's `bannerText`; else the observation's `resetAt`, which then
+replaces the evidence entry with `episode` set to the current stored
+event's `detectedAt`. `eventSnapshot` stays separate and is never updated
+from evidence.
+
+Shared state (Task 2): `readMode()` returns `{ until,
+creditExhaustedUntil, lastError, noSwitch, evidence }`, with `evidence`
+defaulting to `{}` for a file written before it existed, and
+`updateMode(fn)` preserves `evidence` (and every other field) that `fn`
+does not change.
+
+Tests: (Task 2) a real `updateMode`/`readMode` round trip keeps
+`evidence`, and an unrelated update (`clear-credit`) leaves it intact; a
+mode file without the field reads as `evidence: {}`. (Task 4) accept
+changed text, hold the switch with a draft, restart the controller, read
+the same text beyond the two-hour grace: `until` stays on the accepted
+day. And on one live wrapper: accept a changed banner, let the banner
+clear until `reconcile` removes the event (no request open), then show a
+new limit with identical text the next day: the new event's reset opens
+the window, not the old evidence.
 
 ## A2 (Tasks 2, 3, 4): a forced Max launch for a Console request is a failure
 
@@ -58,16 +79,23 @@ new request and no `/exit`; a deadline-passed fallback still supersedes.
 ## A3 (Task 4): record the outcome before restoring, restore before deleting
 
 Rule for fail, cancel and supersede, each under the request lock: (1)
-write `outcome: { kind, reason, at }` on the request record; (2) restore
-`eventSnapshot` into the stored events and save state; (3) delete the
-request. On startup and every tick, a request that already has `outcome`
-is replayed from step 2. Replay is idempotent: restoring the same
-snapshot twice yields the same events. `mode.lastError` and `noSwitch`
-are written with step 1's `updateMode`.
+write `outcome: { kind, reason, at, effects }` on the request record,
+where `effects` lists the mode changes the outcome makes (`lastError`,
+and for fail and cancel the `<handle>:<W>` `noSwitch` entry); (2) apply
+`effects` with `updateMode`; (3) restore `eventSnapshot` into the stored
+events and save state; (4) delete the request. On startup and every
+tick, before any switch is planned, a request that already has `outcome`
+is replayed from step 2. Every step is idempotent: adding a `noSwitch`
+entry that is present, setting the same `lastError`, and restoring the
+same snapshot change nothing. A crash before step 1 leaves a request with
+no outcome, which the next tick evaluates again and reaches the same
+outcome.
 
-Test: inject a failure between steps 2 and 3, and between steps 1 and 2;
-restart; the original reset, anchor, banner text and attempts survive,
-and a second replay changes nothing.
+Test: inject a failure after each of steps 1, 2 and 3; restart; assert
+the visible `lastError`, the durable `noSwitch` entry, the original
+reset, anchor, banner text and attempts, the request gone after replay,
+no new request and no `/exit` for that wrapper on later ticks, and that a
+second replay changes nothing.
 
 ## A4 (Task 2): admission covers every Console resume
 
