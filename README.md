@@ -139,7 +139,7 @@ created owner-only (`0600`).
 
 ## Claude overflow wrapper
 
-Homebrew also installs `claude-overflow`, which accepts Claude Code’s launch arguments. Overflow is off by default. This release includes Console setup and the wrapper; the automatic switch controller is still pending.
+Homebrew also installs `claude-overflow`, which accepts Claude Code’s launch arguments. Overflow is off by default. When enabled, the watchdog switches eligible wrapped sessions to Console credit during a Max limit.
 
 Prepare the Console account before enabling overflow:
 
@@ -262,6 +262,10 @@ rewrap. After a send, an unchanged relative reset stays anchored to detection,
 or to when a later reset was last accepted, so scheduled retries can run. A
 changed countdown or an absolute clock that parses later still holds the event.
 Event removals log the terminal, kind, and reason.
+
+With overflow enabled, a parsed Claude limit on an eligible wrapped session opens a Console window through the reset plus two minutes. Later limit evidence can extend that deadline. Before sending `/exit`, the watchdog checks that exactly one live wrapper owns the terminal, Claude is idle and in the foreground, the current session ID agrees, and neither the screen nor the input field contains a draft. It persists the request first; the wrapper then resumes the same conversation on Console. At most one session starts a switch to Console per tick.
+
+At the deadline, Console sessions switch back to Max when idle. A credit-exhaustion banner blocks new Console launches until the next month begins at 00:00 UTC, or until you clear the mark; existing Console sessions still wait for the deadline. Console 429 errors use the usual bounded outage retries and provider-health checks. While a switch is pending, ordinary resumes pause for that terminal. A failed or cancelled switch restores its original event history and blocks further switches for that wrapper; a new wrapper can try again. Switch sends share the raw capture retention limit, and `--dry-run` prints intended changes without writing state or captures.
 
 ```mermaid
 flowchart TD

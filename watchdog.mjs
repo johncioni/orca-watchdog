@@ -12,6 +12,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runObservedCheck, atomicWriteFile, readRegularSync } from './lib/operations.mjs';
 import { appendActivity, maintainLogs } from './lib/logs.mjs';
 import { VERSION } from './version.mjs';
+import * as overflowState from './lib/overflow-state.mjs';
+import { planOverflow, SWITCH_SEND_TIMEOUT_MS } from './lib/overflow.mjs';
 
 export const RESUME_TEXT = 'Session rate limit has reset. Resume where you left off.';
 
@@ -172,6 +174,10 @@ export const PROVIDERS = defineProviders([
     outage: [
       // The semantic allowlist sees payload only. Exact Claude history markers
       // and bounded physical-line wrapping belong to the TUI envelope.
+      { id: 'claude-console-429', alsoUnknown: false, consoleOnly: true,
+        re: /API Error: Request rejected \(429\) · /,
+        envelope: { markers: [/^$/, /^⎿\s*$/, /^⏺\s*$/],
+          continuation: { line: /^[ \t]+\S/, maxLines: 4 } } },
       { id: 'claude-api-error', alsoUnknown: true,
         re: /API Error: (5\d\d\b|Connection error\b|.*\boverloaded_error\b)/i,
         envelope: {
@@ -300,9 +306,11 @@ export function sanitize(text, limit = 200) {
 // rule. Derived from PROVIDERS (DOG-37): one row per provider outage shape, with
 // alsoUnknown extending the row to the 'unknown' identity. `platforms` still gates
 // which terminal identities a row applies to; envelope owns markers and wrapping.
-export const OUTAGE_PATTERNS = PROVIDERS.flatMap((p) =>
-  p.outage.map((o) => ({ id: o.id, re: o.re, envelope: o.envelope,
+const ALL_OUTAGE_PATTERNS = PROVIDERS.flatMap((p) =>
+  p.outage.map((o) => ({ id: o.id, re: o.re, envelope: o.envelope, consoleOnly: o.consoleOnly === true,
     platforms: o.alsoUnknown ? [p.id, 'unknown'] : [p.id] })));
+export const OUTAGE_PATTERNS = ALL_OUTAGE_PATTERNS.filter(p => !p.consoleOnly);
+const outagePatterns = consoleRows => consoleRows ? ALL_OUTAGE_PATTERNS : OUTAGE_PATTERNS;
 const RETRY_RE = /retrying in \d|attempt \d+\s*(\/|of)\s*\d+|Reconnecting\.\.\. (\d+\/\d+|waiting for network)|esc to interrupt/i;
 // Idle Codex composer chrome, also the draft guard's history boundary.
 const CODEX_IDLE_COMPOSER_RE = /^›(\s+Ask Codex to do anything)?\s*$/;
@@ -403,7 +411,7 @@ const outageLineMatch = (pattern, line) => {
   return { marker };
 };
 
-const scanOutage = (sourceWindow, window, platform, platformFooterStart) => {
+const scanOutage = (sourceWindow, window, platform, platformFooterStart, consoleRows = false) => {
   let blocked = null;
   // The payload closest to the bottom wins as the most recent near miss;
   // equal indices go to the later outage pattern.
@@ -411,7 +419,7 @@ const scanOutage = (sourceWindow, window, platform, platformFooterStart) => {
     if (blocked === null || index >= blocked.index) blocked = { index, blocker };
   };
 
-  for (const pattern of OUTAGE_PATTERNS) {
+  for (const pattern of outagePatterns(consoleRows)) {
     let payloadCandidate = null;
     let bannerCandidate = null;
     window.forEach((line, index) => {
@@ -466,16 +474,16 @@ const scanOutage = (sourceWindow, window, platform, platformFooterStart) => {
   return { banner: null, blocker: blocked?.blocker ?? null };
 };
 
-export function hasOutageLine(lines) {
+export function hasOutageLine(lines, { consoleRows = false } = {}) {
   const window = toWindow(lines);
-  return OUTAGE_PATTERNS.some((pattern) => window.some((line) => outageLineMatch(pattern, line) !== null));
+  return outagePatterns(consoleRows).some((pattern) => window.some((line) => outageLineMatch(pattern, line) !== null));
 }
 
-export function classifyOutageNearMiss(lines, platform = 'unknown') {
+export function classifyOutageNearMiss(lines, platform = 'unknown', { consoleRows = false } = {}) {
   lines = stripSidePanel(lines);
   const sourceWindow = lines.slice(-TAIL_LINES).map((line) => stripAnsi(line).slice(0, WINDOW_LINE_MAX));
   const window = toWindow(lines);
-  const result = scanOutage(sourceWindow, window, platform, footerStartFor(platform, window));
+  const result = scanOutage(sourceWindow, window, platform, footerStartFor(platform, window), consoleRows);
   return result.banner === null ? result.blocker : null;
 }
 
@@ -494,7 +502,7 @@ const CODEX_LIMIT_FORMS = [
   /^■\s*usage limit reached, try again later\.?$/i,
 ];
 
-export function detectBanner(lines, platform = 'unknown', now = new Date()) {
+export function detectBanner(lines, platform = 'unknown', now = new Date(), { consoleRows = false } = {}) {
   lines = stripSidePanel(lines);
   const sourceWindow = lines.slice(-TAIL_LINES).map((l) => stripAnsi(l).slice(0, WINDOW_LINE_MAX));
   const window = toWindow(lines);
@@ -530,7 +538,7 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
     : providerFor(platform)?.chrome.outputStart ?? [];
   const isOutputStart = (x) => outputStart.some((re) => re.test(x));
   const staleAfter = (r) => window.some((x, i) => i > r && beforeInputBox(x, i)
-    && (isOutputStart(x) || OUTAGE_PATTERNS.some((pattern) => testPattern(pattern.re, x))
+    && (isOutputStart(x) || outagePatterns(consoleRows).some((pattern) => testPattern(pattern.re, x))
       || RETRY_RE.test(x)));
   const kept = window.filter((l, i) => beforeInputBox(l, i) && !VETO_RE.test(l) && !FOOTER_RE.test(l));
   const text = kept.join('\n');
@@ -583,7 +591,7 @@ export function detectBanner(lines, platform = 'unknown', now = new Date()) {
   if (codexLimit) limit = codexLimit;
 
   // --- outage rule ---
-  const outage = scanOutage(sourceWindow, window, platform, platformFooterStart).banner;
+  const outage = scanOutage(sourceWindow, window, platform, platformFooterStart, consoleRows).banner;
 
   let pick = (limit && outage) ? (limit.reachedIndex >= outage.index ? limit : outage) : (limit ?? outage);
   if (platformSupports(platform, 'credits')) {
@@ -1166,11 +1174,11 @@ function log(level, msg) {
   catch { /* diagnostic IO must not affect sends */ }
 }
 
-export async function orca(args, execImpl = pExecFile) {
+export async function orca(args, execImpl = pExecFile, timeoutMs = 15_000) {
   let stdout;
   const startedAt = performance.now();
   try {
-    ({ stdout } = await execImpl(ORCA, [...args, '--json'], { timeout: 15_000 }));
+    ({ stdout } = await execImpl(ORCA, [...args, '--json'], { timeout: timeoutMs }));
   } catch (e) {
     // orca exits non-zero for structured errors but still prints JSON to stdout
     if (!e.stdout) { e.elapsedMs = performance.now() - startedAt; throw e; }
@@ -1278,13 +1286,226 @@ async function readTail(handle, orcaFn = orca) {
   return { tail, draft: r.terminal.draft, terminal: r.terminal };
 }
 
-const DEFAULT_DEPS = () => ({ orca, fetchImpl: globalThis.fetch, env: process.env, now: () => new Date(), loadState, saveState, log,
+const overflowAlive = pid => {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+};
+function overflowSession(r) {
+  if (!Number.isSafeInteger(r.claudePid) || r.claudePid <= 0 || typeof r.configDir !== 'string') return null;
+  try { return JSON.parse(readRegularSync(path.join(r.configDir, 'sessions', `${r.claudePid}.json`))); }
+  catch { return null; }
+}
+async function overflowForeground(r, deps) {
+  if (!Number.isSafeInteger(r.claudePid) || r.claudePid <= 0 || !Number.isSafeInteger(r.pgid) || r.pgid <= 0
+    || typeof r.tty !== 'string' || !r.tty || r.tty === '??') return false;
+  try {
+    const { stdout } = await deps.execFile('/bin/ps', ['-o', 'pgid=,tpgid=,tty=', '-p', String(r.claudePid)], { timeout: 5000 });
+    const fields = stdout.trim().split(/\s+/);
+    return fields.length === 3 && Number(fields[0]) === r.pgid && Number(fields[1]) === r.pgid && fields[2] === r.tty;
+  } catch { return false; }
+}
+async function overflowFacts(ov, handle = null) {
+  const registrations = overflowState.readRegistrations(ov).filter(r => handle === null || r.handle === handle), sessions = new Map();
+  const facts = { alive: new Set(), foreground: new Set() };
+  for (const r of registrations) {
+    for (const pid of [r.wrapperPid, r.claudePid]) if (ov.alive(pid)) facts.alive.add(pid);
+    sessions.set(`${r.configDir}:${r.claudePid}`, overflowSession(r));
+    if (facts.alive.has(r.wrapperPid) && facts.alive.has(r.claudePid) && await overflowForeground(r, ov)) facts.foreground.add(r.handle);
+  }
+  return { registrations, sessions, facts };
+}
+async function overflowContext(deps, listedHandles) {
+  const ov = deps.overflow;
+  if (ov.enabled === false) return null; // explicit test/off override: no filesystem access
+  const enabled = overflowState.isEnabled(ov), paths = overflowState.overflowPaths(ov.home), requests = new Map();
+  let names;
+  try { names = fs.readdirSync(paths.requestsDir); } catch (e) { if (e.code !== 'ENOENT') throw e; names = []; }
+  for (const name of names) {
+    if (!/^[A-Za-z0-9_-]+\.json$/.test(name)) continue;
+    const handle = name.slice(0, -5), q = overflowState.readRequest(handle, ov);
+    if (q) requests.set(handle, q);
+  }
+  if (!enabled && ![...requests.values()].some(q => q.outcome)) return null;
+  return { ...await overflowFacts(ov), enabled, mode: overflowState.readMode(ov), requests, listedHandles };
+}
+function overflowBanner(banner, platform, now) {
+  if (!banner) return null;
+  const resetAt = banner.resetAt ?? (banner.kind === 'limit' ? parseResetTime(banner.bannerText, now)?.toISOString() : null) ?? null;
+  return { ...banner, platform, resetAt, parsedReset: resetAt !== null };
+}
+function overflowBilling(tail) {
+  const window = toWindow(stripSidePanel(tail)), footer = footerStartFor('claude', window);
+  return window.slice(0, footer < 0 ? window.length : footer - 2)
+    .some(line => /Credit balance too low · Add funds:/.test(line));
+}
+
+async function applyOverflow({ context, observations, events, sendCandidates, byHandle, now, dryRun, deps, saveCapture }) {
+  const ov = deps.overflow, log = deps.log, paths = overflowState.overflowPaths(ov.home);
+  const held = new Set();
+  const writeRequest = (handle, q) => atomicWriteFile(paths.requestsDir, `${handle}.json`, JSON.stringify(q, null, 2) + '\n');
+  const locked = async (handle, fn) => {
+    if (held.has(handle)) return;
+    try { await ov.updateRequest(handle, fn, ov); }
+    catch (e) {
+      if (!(e instanceof overflowState.FlockTimeout)) throw e;
+      held.add(handle);
+      log('warn', `overflow request lock held for ${handle}; holding this tick`);
+    }
+  };
+  const restoreOutcome = async (handle, q) => {
+    const { effects, kind } = q.outcome;
+    await overflowState.updateMode(mode => ({ lastError: effects.lastError,
+      noSwitch: [...new Set([...mode.noSwitch, ...effects.noSwitch ?? []])] }), ov);
+    await ov.afterOutcomeStep?.(2);
+    for (const [key, ev] of Object.entries(events)) if (ev.handle === handle) delete events[key];
+    Object.assign(events, structuredClone(q.eventSnapshot));
+    deps.saveState(events);
+    await ov.afterOutcomeStep?.(3);
+    log(kind === 'supersede' ? 'info' : 'error', effects.lastError);
+    held.add(handle); // no new switch or ordinary send on a recovery tick
+    return null;
+  };
+  // Replay durable outcomes even when overflow has since been disabled. Never
+  // take a request lock on dry-run: lock creation itself would be a write.
+  for (const [handle, q] of context.requests) {
+    if (!q.outcome) continue;
+    if (dryRun) { log('info', `[dry-run] would replay overflow outcome for ${handle}`); held.add(handle); continue; }
+    await locked(handle, current => current?.outcome ? restoreOutcome(handle, current) : current);
+  }
+  const input = { ...context, observations, events, now };
+  let plan = planOverflow(input);
+  if (dryRun && JSON.stringify(plan.mode) !== JSON.stringify(context.mode)) {
+    console.log(`would update overflow mode: until ${plan.mode.until}, credit exhausted until ${plan.mode.creditExhaustedUntil}`);
+  }
+  if (context.enabled && !dryRun) {
+    context.mode = await overflowState.updateMode(mode => planOverflow({ ...input, mode }).mode, ov);
+    plan = planOverflow({ ...input, mode: context.mode });
+  }
+  for (const handle of held) plan.suppress.set(handle, 'all');
+  if (!dryRun) for (const { handle, status } of plan.idleHolds) {
+    const ev = events[handle];
+    if (ev?.kind !== 'limit' || ev.overflowIdleLogged) continue;
+    ev.overflowIdleLogged = true;
+    deps.saveState(events);
+    log('info', `overflow hold ${handle}: pid-file status ${status ?? 'missing'}; waiting for idle`);
+  }
+  for (let i = sendCandidates.length - 1; i >= 0; i--) {
+    const ev = events[sendCandidates[i]], suppression = plan.suppress.get(ev?.handle);
+    if (!ev || suppression === 'all' || (suppression === 'limit-credits' && ['limit', 'credits'].includes(ev.kind))) sendCandidates.splice(i, 1);
+  }
+  // Every transition is recomputed under the same request lock used to register
+  // G+1. A stale phase-2 plan can never cancel or resend to a successor.
+  for (const [handle] of context.requests) {
+    if (held.has(handle)) continue;
+    if (dryRun) {
+      for (const action of ['confirms', 'fails', 'cancels', 'supersedes']) {
+        if (plan[action].some(a => a.handle === handle)) log('info', `[dry-run] overflow ${action} ${handle}`);
+      }
+      continue;
+    }
+    await locked(handle, async q => {
+      if (!q) return null;
+      if (q.outcome) return restoreOutcome(handle, q);
+      const fresh = planOverflow({ ...input, ...await overflowFacts(ov, handle), mode: overflowState.readMode(ov),
+        requests: new Map([[handle, q]]), now: deps.now() });
+      const confirm = fresh.confirms.find(a => a.handle === handle);
+      if (confirm) {
+        for (const [key, ev] of Object.entries(events)) {
+          if (ev.handle === handle && Date.parse(ev.detectedAt) < Date.parse(confirm.successorLaunchedAt)) {
+            delete events[key]; log('info', `removed ${ev.kind} on ${handle}: switched`);
+          }
+        }
+        deps.saveState(events);
+        log('info', `switched ${handle} to ${q.to}`);
+        held.add(handle);
+        return null;
+      }
+      for (const [field, kind] of [['fails', 'fail'], ['cancels', 'cancel'], ['supersedes', 'supersede']]) {
+        const action = fresh[field].find(a => a.handle === handle);
+        if (!action) continue;
+        const reason = action.reason ?? 'launch mode changed';
+        const outcome = { kind, reason, at: deps.now().toISOString(), effects: {
+          lastError: `overflow ${kind} on ${handle}: ${reason}`,
+          noSwitch: kind === 'supersede' ? [] : [`${handle}:${q.wrapperPid}`],
+        } };
+        const recorded = { ...q, outcome };
+        // Publish the journal while updateRequest holds the lock, before any
+        // other file changes; returning null deletes it only after restoration.
+        writeRequest(handle, recorded);
+        await ov.afterOutcomeStep?.(1);
+        return restoreOutcome(handle, recorded);
+      }
+      return q;
+    });
+  }
+  for (const action of [...plan.switches, ...plan.resends]) {
+    const { handle } = action;
+    if (held.has(handle)) continue;
+    const planned = context.requests.get(handle), to = action.to ?? planned?.to;
+    if (dryRun) { console.log(`would switch ${handle} to ${to}`); continue; }
+    if (deps.isDisabled()) { log('info', 'paused mid-tick; halting remaining switches'); break; }
+    let read;
+    try {
+      await deps.orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '5000']);
+      read = await readTail(handle, deps.orca);
+    } catch (e) { log('warn', `overflow hold ${handle}: ${describeOrcaError(e)}`); continue; }
+    const proof = await overflowFacts(ov, handle), owner = proof.registrations[0];
+    const session = owner && proof.sessions.get(`${owner.configDir}:${owner.claudePid}`);
+    if (!owner || proof.registrations.length !== 1 || !proof.facts.foreground.has(handle)
+      || session?.status !== 'idle' || session.sessionId !== owner.sessionId
+      || isShellPrompt(read.tail, byHandle.get(handle)?.agentIdentity) || isInputOccupied(read.tail, 'claude', read.draft)
+      || (to === 'console' && detectBanner(read.tail, 'claude', deps.now(), { consoleRows: owner.mode === 'console' })?.kind !== 'limit')
+      || deps.isDisabled() || !overflowState.isEnabled(ov)) continue;
+    await locked(handle, async q => {
+      const at = deps.now(), facts = await overflowFacts(ov, handle);
+      const r = facts.registrations.find(r => r.handle === handle);
+      if (!r || r.wrapperPid !== (planned ?? action).wrapperPid || r.generation !== (planned ?? action).generation) return q;
+      const freshBanner = detectBanner(read.tail, 'claude', at, { consoleRows: r.mode === 'console' });
+      const freshObservations = new Map(observations);
+      freshObservations.set(handle, { read: true, banner: overflowBanner(freshBanner, 'claude', at),
+        billing: r.mode === 'console' && overflowBilling(read.tail) });
+      const requests = new Map(context.requests);
+      if (q) requests.set(handle, q); else requests.delete(handle);
+      const fresh = planOverflow({ ...input, ...facts, enabled: overflowState.isEnabled(ov), mode: overflowState.readMode(ov),
+        observations: freshObservations, requests, now: at });
+      const allowed = planned ? q && fresh.resends.some(a => a.handle === handle)
+        : !q && fresh.switches.some(a => a.handle === handle && a.to === to);
+      const session = facts.sessions.get(`${r.configDir}:${r.claudePid}`);
+      if (!allowed || !facts.facts.foreground.has(handle) || session?.status !== 'idle' || session.sessionId !== r.sessionId
+        || (q && session.sessionId !== q.sessionId) || isShellPrompt(read.tail, byHandle.get(handle)?.agentIdentity)
+        || isInputOccupied(read.tail, 'claude', read.draft) || (to === 'console' && freshBanner?.kind !== 'limit')
+        || deps.isDisabled()) return q;
+      const next = q ? { ...q, attempts: q.attempts + 1, sentAt: at.toISOString() }
+        : { state: 'pending', handle, wrapperPid: r.wrapperPid, generation: r.generation, sessionId: r.sessionId,
+          to, attempts: 1, sentAt: at.toISOString(), createdAt: at.toISOString(),
+          eventSnapshot: structuredClone(Object.fromEntries(Object.entries(events).filter(([, ev]) => ev.handle === handle))) };
+      // Keep the lock through the send so an independent Claude exit cannot
+      // consume this request and launch a successor between persistence and /exit.
+      writeRequest(handle, next);
+      let sent = false;
+      try {
+        if (!deps.isDisabled()) {
+          await deps.orca(['terminal', 'send', '--terminal', handle, '--text', '/exit', '--enter'], undefined, SWITCH_SEND_TIMEOUT_MS);
+          sent = true; log('info', `switching ${handle} to ${to} (attempt ${next.attempts})`);
+        }
+      } catch (e) { log('warn', `overflow send failed for ${handle}: ${describeOrcaError(e)}`); }
+      saveCapture({ at: at.toISOString(), reason: 'send', handle,
+        agentIdentity: byHandle.get(handle)?.agentIdentity ?? null, platform: 'claude', kind: freshBanner?.kind ?? null,
+        patternId: freshBanner?.patternId ?? null, attempt: next.attempts, sent, overflow: { to, attempt: next.attempts }, read: read.terminal });
+      return next;
+    });
+  }
+}
+
+const DEFAULT_DEPS = () => ({ overflow: { home: os.homedir(), alive: overflowAlive, execFile: pExecFile,
+  updateRequest: overflowState.updateRequest }, orca, fetchImpl: globalThis.fetch, env: process.env, now: () => new Date(), loadState, saveState, log,
   saveCapture: (c) => writeCapture(STATE_DIR, c),
   newEpisodeId: randomUUID, spawn: spawnAlert, readChoice, clearChoice, reapChoices,
   isDisabled: () => fs.existsSync(DISABLED_FILE) });
 
 export async function tick({ dryRun }, depsIn = {}) {
-  const deps = { ...DEFAULT_DEPS(), ...depsIn };
+  const defaults = DEFAULT_DEPS();
+  const deps = { ...defaults, ...depsIn, overflow: { ...defaults.overflow, ...depsIn.overflow } };
   const observe = (...args) => { try { deps.observe?.(...args); } catch { /* diagnostics cannot change eligibility */ } };
   const saveCapture = (c) => {
     if (dryRun) return;
@@ -1309,6 +1530,9 @@ export async function tick({ dryRun }, depsIn = {}) {
   }
   const byHandle = new Map(terminals.map((t) => [t.handle, t]));
 
+  const overflow = await overflowContext(deps, terminals.map(t => t.handle));
+  const consoleHandles = overflow ? planOverflow({ ...overflow, observations: new Map(), events: {}, now: deps.now() }).consoleHandles : new Set();
+  const overflowObservations = new Map(terminals.map(t => [t.handle, { read: false, banner: null, billing: false }]));
   const observations = [];
   const startedAt = Date.now();
   const queue = terminals.filter((t) => t.connected && t.writable);
@@ -1321,9 +1545,12 @@ export async function tick({ dryRun }, depsIn = {}) {
       attemptedReads += 1;
       try {
         const { tail, terminal } = await readTail(t.handle, deps.orca);
-        const banner = detectBanner(tail, inferPlatform(t), deps.now());
-        if (!banner && shouldLog('debug') && hasOutageLine(tail)) {
-          const blocker = classifyOutageNearMiss(tail, inferPlatform(t));
+        const consoleRows = consoleHandles.has(t.handle);
+        const readAt = deps.now();
+        const banner = detectBanner(tail, inferPlatform(t), readAt, { consoleRows });
+        overflowObservations.set(t.handle, { read: true, banner: overflowBanner(banner, inferPlatform(t, banner), readAt), billing: consoleRows && overflowBilling(tail) });
+        if (!banner && shouldLog('debug') && hasOutageLine(tail, { consoleRows })) {
+          const blocker = classifyOutageNearMiss(tail, inferPlatform(t), { consoleRows });
           if (blocker !== null) {
             log('debug', `outage payload present but not detected (${blocker}) on ${t.handle}: ${sanitize(tail.slice(-TAIL_LINES).join(' | '), 600)}`);
           }
@@ -1374,6 +1601,9 @@ export async function tick({ dryRun }, depsIn = {}) {
       agentIdentity: byHandle.get(ev.handle)?.agentIdentity ?? null, platform: ev.platform, kind: ev.kind,
       patternId: o.banner?.patternId ?? null, attempt: null, sent: null, read: o.read });
   }
+
+  if (overflow && !degradedReason) await applyOverflow({ context: overflow, observations: overflowObservations,
+    events, sendCandidates, byHandle, now, dryRun, deps, saveCapture });
 
   // Reconcile has already selected sends. Consent becomes eligible next tick,
   // preserving unread/first-miss freezes and never bypassing the send guards.
@@ -1477,7 +1707,7 @@ export async function tick({ dryRun }, depsIn = {}) {
       log('warn', `skip ${ev.handle}: re-read failed (${describeOrcaError(e)}); event untouched`); continue;
     }
     const term = byHandle.get(ev.handle);
-    const fresh = detectBanner(tail, inferPlatform(term), now);
+    const fresh = detectBanner(tail, inferPlatform(term), now, { consoleRows: consoleHandles.has(ev.handle) });
     if (!fresh) {   // same hold as reconcile rule 3b: one miss is not proof
       log('info', `skip ${ev.handle}: banner cleared before send; holding`);
       ev.clearedAt = now.toISOString(); deps.saveState(events); continue;

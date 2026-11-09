@@ -5,12 +5,22 @@ import { spawnSync } from 'node:child_process';
 import * as watchdog from './watchdog.mjs';
 import { VERSION } from './version.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { detectBanner, parseResetTime, reconcile, eventKey, stripAnsi, sanitize, hasOutageLine, inferPlatform,
+import { detectBanner as originalDetectBanner, parseResetTime, reconcile, eventKey, stripAnsi, sanitize, hasOutageLine, inferPlatform,
   SCHEDULE, OUTAGE_RESUME_TEXT, newEvent, validateEvent, parseStateFile } from './watchdog.mjs';
 import { isShellPrompt, isInputOccupied } from './watchdog.mjs';
 import { statusUrlFor, fetchIndicator, fetchGcpIncidents, suppressedByStatus } from './watchdog.mjs';
 import { CONNECTIVITY_URL, connectivityUrl, hasConnectivity } from './watchdog.mjs';
-import { tick, RESUME_TEXT } from './watchdog.mjs';
+import { RESUME_TEXT } from './watchdog.mjs';
+
+// Replay every existing detector fixture (including DOG-52, DOG-78 and outage
+// tables) with Console rows enabled, asserting the full original result.
+function detectBanner(lines, platform, now) {
+  const expected = originalDetectBanner(lines, platform, now);
+  assert.deepEqual(originalDetectBanner(lines, platform, now, { consoleRows: true }), expected);
+  return expected;
+}
+// Legacy tick tests are explicitly overflow-disabled and never inspect real HOME.
+const tick = (options, deps) => watchdog.tick(options, { overflow: { enabled: false }, ...deps });
 
 const CLAUDE_BANNER = [
   '─'.repeat(40),
@@ -4978,4 +4988,24 @@ test('DOG-72: pre-send replacement captures the new kind without sending', async
   assert.deepEqual(h.sent, []);
   assert.equal(h.saved()[H].kind, 'credits');
   assert.equal(h.saved()[H].attempts, 0);
+});
+
+// Source-derived Claude 2.1.319 Console wording; unverified live.
+test('Console 429 row is opt-in for detection, near misses and limit/outage arbitration', () => {
+  const lines = ['⎿ API Error: Request rejected (429) · this may be a temporary capacity issue.', '────────────', '❯', '────────────'];
+  assert.equal(watchdog.detectBanner(lines, 'claude', NOW), null);
+  assert.equal(watchdog.detectBanner(lines, 'claude', NOW, { consoleRows: true })?.kind, 'outage');
+  assert.equal(watchdog.hasOutageLine(lines), false);
+  assert.equal(watchdog.hasOutageLine(lines, { consoleRows: true }), true);
+  const near = ['◆ API Error: Request rejected (429) · capacity', '> '];
+  assert.equal(watchdog.classifyOutageNearMiss(near, 'claude'), null);
+  assert.equal(watchdog.classifyOutageNearMiss(near, 'claude', { consoleRows: true }), 'envelope');
+  const combined = [CLAUDE_BANNER[1], ...lines];
+  assert.equal(watchdog.detectBanner(combined, 'claude', NOW, { consoleRows: true })?.kind, 'outage');
+  assert.equal(watchdog.detectBanner(lines, 'unknown', NOW, { consoleRows: true }), null);
+});
+test('Console 429 payload with a nonmatching envelope stales a limit only with consoleRows', () => {
+  const lines = [CLAUDE_BANNER[1], '⎿ Tip: API Error: Request rejected (429) · capacity', '────────────', '❯', '────────────'];
+  assert.equal(watchdog.detectBanner(lines, 'claude', NOW, { consoleRows: false })?.kind, 'limit');
+  assert.equal(watchdog.detectBanner(lines, 'claude', NOW, { consoleRows: true }), null);
 });
