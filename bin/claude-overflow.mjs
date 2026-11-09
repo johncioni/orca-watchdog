@@ -25,6 +25,21 @@ function withoutAdvisor(argv) {
   return result;
 }
 function exitStatus(code, signal) { return code ?? (128 + (os.constants.signals[signal] ?? 0)); }
+function isWrapperExecutable(command, env) {
+  const candidates = command.includes('/') ? [command] : (env.PATH ?? '').split(path.delimiter).map(dir => path.join(dir, command));
+  const wrappers = ['./claude-overflow', '../../bin/claude-overflow', './claude-overflow.mjs'].flatMap(relative => {
+    try { return [fs.statSync(new URL(relative, import.meta.url))]; } catch { return []; }
+  });
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      const stat = fs.statSync(candidate);
+      if (!stat.isFile()) continue;
+      return wrappers.some(wrapper => wrapper.dev === stat.dev && wrapper.ino === stat.ino);
+    } catch { /* Match executable PATH lookup; a missing target is handled by spawn. */ }
+  }
+  return false;
+}
 function foregroundIdentity(run = spawnSync) {
   const result = run('/bin/ps', ['-o', 'pgid=,tty=', '-p', String(process.pid)], { encoding: 'utf8' });
   const [pgid, tty] = (result.stdout ?? '').trim().split(/\s+/);
@@ -38,7 +53,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
   const sleep = deps.sleep ?? delay;
   const every = deps.setInterval ?? setInterval;
   const clear = deps.clearInterval ?? clearInterval;
-  const paths = overflowPaths(home), opts = { home }, handle = env.ORCA_TERMINAL_HANDLE;
+  const paths = overflowPaths(home), opts = { home, timeoutS: deps.flockTimeoutS }, handle = env.ORCA_TERMINAL_HANDLE;
   const claude = env.CLAUDE_OVERFLOW_CLAUDE || 'claude';
   const parsed = parseClaudeArgv(argv), maxDir = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
   let child = null, stopped = null, owned = false, entry, pollTimer;
@@ -80,6 +95,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
     } catch { /* Claude removes its pid file before exit; retain the last observation. */ }
   }
   try {
+    if (isWrapperExecutable(claude, env)) { report('refusing recursive Claude executable'); return 1; }
     if (!handle || !isEnabled(opts) || env.CLAUDE_OVERFLOW_OWNER || !parsed.parseable || parsed.print || parsed.selector === 'unsupported')
       return await runChild(argv, env);
     try {
@@ -88,7 +104,8 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
         claudePid: null, sessionId: parsed.sessionId || randomUUID(), configDir: maxDir, mode: 'max',
         eligible: false, model: null, launchedAt: now().toISOString(), cwd: process.cwd(), ...identity };
       owned = await claimHandle(entry, opts);
-    } catch { owned = false; }
+      if (!owned) report(`cannot claim terminal ${handle}: another wrapper owns the handle or ownership is uncertain`);
+    } catch (error) { report(`cannot claim terminal ${handle}: ${error.message}`); owned = false; }
     if (!owned) return await runChild(argv, env);
 
     let consumed = null, relaunch = false, fallback = false, fallbackTried = false;
@@ -99,7 +116,7 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
       let model = resolveModel({ argvModel: parsed.model, env, configDir: mode === 'console' ? paths.consoleDir : maxDir });
       const eligible = isEligibleModel(model);
       if (!eligible) mode = 'max';
-      let reason = record?.to === 'console' && mode === 'max' ? 'mode' : 'ok';
+      let reason = record && mode !== record.to ? 'mode' : 'ok';
       if (consumed && !record) { mode = 'max'; reason = 'mode'; }
       if (mode === 'console') {
         // Task 3 replaces this readiness result with syncConsoleProject(entry.cwd, opts).

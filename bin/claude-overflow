@@ -11,7 +11,13 @@ while [ -L "$SCRIPT" ]; do
 done
 ROOT="$(cd "$(dirname "$SCRIPT")/.." && pwd -P)"
 SCRIPT="$ROOT/bin/claude-overflow"
+is_wrapper() {
+  [ "$1" -ef "$SCRIPT" ] || [ "$1" -ef "$ROOT/../bin/claude-overflow" ]
+}
 CLAUDE_BIN="${CLAUDE_OVERFLOW_CLAUDE:-}"
+if [ -n "$CLAUDE_BIN" ] && is_wrapper "$(command -v "$CLAUDE_BIN" || true)"; then
+  echo 'error: refusing recursive Claude executable' >&2; exit 1
+fi
 if [ -z "$CLAUDE_BIN" ]; then
   OLD_IFS="$IFS"
   IFS=:
@@ -26,7 +32,7 @@ if [ -z "$CLAUDE_BIN" ]; then
       esac
     done
     RESOLVED="$(cd "$(dirname "$CANDIDATE")" && pwd -P)/$(basename "$CANDIDATE")"
-    if [ "$RESOLVED" != "$SCRIPT" ]; then CLAUDE_BIN="$RESOLVED"; break; fi
+    if ! is_wrapper "$RESOLVED"; then CLAUDE_BIN="$RESOLVED"; break; fi
   done
   IFS="$OLD_IFS"
 fi
