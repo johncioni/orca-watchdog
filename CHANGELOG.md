@@ -6,8 +6,9 @@ All notable changes to Orca Watchdog are documented here.
 
 ### Added
 
+- Switch eligible wrapped Claude sessions to Console credit during a parsed Max limit, then back to Max once the reset passes and the session is idle. Switches verify terminal ownership, foreground status, drafts and session identity; failed switches restore the original event history and stop retrying for that wrapper. Console credit exhaustion blocks new Console launches, and Console 429 errors follow the status-gated outage path. Overflow remains opt-in. (DOG-81)
 - Add `orca-watchdog overflow setup|enable|disable|status|clear-credit` and setup checks in `doctor`. Console setup shares the six approved user entries without copying credentials, and the wrapper copies project trust from Max under Claude's config lock before each Console launch. For every such project, it marks external `CLAUDE.md` imports approved and the import warning shown, even if Max never approved those imports or declined them. A missing exact Max project entry, missing trust at that key or an ancestor, or a lock timeout keeps the session on Max and logs the reason. (DOG-81)
-- Ship the opt-in `claude-overflow` wrapper in Homebrew, with exclusive terminal ownership, shared Console resume admission, and session-preserving account switches. Console launches disable the advisor; Max launches retain the incoming environment. The automatic switch controller remains pending. (DOG-81)
+- Ship the opt-in `claude-overflow` wrapper in Homebrew, with exclusive terminal ownership, shared Console resume admission, and session-preserving account switches. Console launches disable the advisor; Max launches retain the incoming environment. (DOG-81)
 
 ## 1.2.21 - 2026-11-08
 
