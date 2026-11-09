@@ -2,6 +2,29 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-11-09: Overflow supersedes a changed-session switch and bounds the locked `/exit`
+
+A pending switch whose agreed session moved (a `/clear` or `/resume` after a failed `/exit`) is
+superseded once the relaunch window passes, never cancelled: cancel's `noSwitch` blocks both
+directions and would leave a due switch-back on Console credit. The `/exit` sent under the request
+lock times out at 5 s, inside the wrapper's 10 s lock wait, or the wrapper gives up and drops to a shell.
+PR: https://github.com/johncioni/orca-watchdog/pull/126, https://github.com/johncioni/orca-watchdog/pull/127
+
+## 2026-11-08: Console `.claude.json` writes take our flock, then Claude's lock
+
+Claude Code saves `.claude.json` under a `mkdir` lock (`<file>.lock`) it calls stale after 10 s, and
+merges `projects` on save. This repo's writers serialize through a flock under the overflow state
+directory, then take Claude's lock; never flock Claude's lock path or unlink a flock inode in use.
+PR: https://github.com/johncioni/orca-watchdog/pull/123, https://github.com/johncioni/orca-watchdog/pull/125
+
+## 2026-11-08: Console sync approves external imports; Console drops the advisor (John)
+
+On Console, `~/.claude/CLAUDE.md` loads as a project file whose imports ask per project, default No,
+so an unattended relaunch would stop or run without them: the sync approves them for every synced
+project, even where Max declined (A11). Console turns the advisor on even without `--advisor`, so a
+Console launch strips the flag and sets `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` (A7).
+PR: https://github.com/johncioni/orca-watchdog/pull/124, https://github.com/johncioni/orca-watchdog/pull/122
+
 ## 2026-11-08: Claude chrome and side panels are found by structure, not content
 
 Claude Code's footer changes with width, model and plugins, so the closed input box (rule, bare `❯`,
@@ -43,45 +66,22 @@ timeouts (1.2.12 began naming the cause). Leave the key out, and measure read la
 before adding any launchd throttling key.
 PR: https://github.com/johncioni/orca-watchdog/pull/91
 
-## 2026-09-23: An accepted later reset re-baselines the event's text and anchor
+## 2026-09-23: A limit's reset comes from its banner block; text identity gates the moved-later hold
 
-When a moved-later reset is honoured with different text, the event stores
-the fresh banner text and re-anchors relative resets to that moment
-(`resetAnchorAt`), so later "unchanged" checks compare against the last
-accepted text. Text identity is the only "unchanged" signal (open gaps: ruled-out.md).
-PR: https://github.com/johncioni/orca-watchdog/pull/66
+The clock comes from the block of relevant lines ending at the last one, widening to the nearest earlier
+reached line when that block has none (a blank or tip line can split a banner). Before the first send,
+identical text skips the "reset moved later" hold, so a limit resumes once reads recover (John's call);
+after a send, an identical absolute clock keeps the hold and identical relative text stays anchored. A
+later reset honoured with new text re-baselines the text and `resetAnchorAt` (open gaps: ruled-out.md).
+PR: https://github.com/johncioni/orca-watchdog/pull/56, https://github.com/johncioni/orca-watchdog/pull/58, https://github.com/johncioni/orca-watchdog/pull/66
 
-## 2026-09-23: A new message, outage or retry below a limit's reached line makes it stale
+## 2026-09-23: Output below a limit's reached line stales it or outranks it
 
-Anything printed after the banner means the limit is no longer current: a message-start marker
-(registry `chrome.outputStart`), an outage payload or a retry line below the reached line, above the
-input box, stales it. Plain prose does not (Claude banners carry `Tip:` lines). It runs on every
-platform, so a new outage row also stales limits: replay recorded screens against the last release.
-PR: https://github.com/johncioni/orca-watchdog/pull/60, https://github.com/johncioni/orca-watchdog/pull/64
-
-## 2026-09-23: Limit/outage arbitration uses the limit's reached line
-
-An outage printed after a limit was reached is the newer event, so `pick`
-keeps a limit only if its reached line is at or below the outage. Anchoring
-on the last relevant line let an error line with reset words (`Service
-Unavailable`) tie and revive a stale limit. Relies on chronological order.
-PR: https://github.com/johncioni/orca-watchdog/pull/62
-
-## 2026-09-22: A limit's reset comes from its banner block
-
-The clock comes from the block of consecutive relevant lines ending at the
-last one, widening to the nearest earlier reached line when that block has
-none, because a blank or tip line can split a banner. Wrapping is not
-content. Re-parsing after a send follows the 2026-09-23 re-baseline entry.
-PR: https://github.com/johncioni/orca-watchdog/pull/58
-
-## 2026-09-22: An unsent limit event with an unchanged banner skips the moved-later hold
-
-Before the first send, identical banner text skips the "reset moved later"
-hold, so a limit resumes once reads recover (John chose this over a docs-only
-caveat). After a send, an identical absolute clock keeps the hold, since a
-limit that has not reset reprints it; identical relative text stays anchored.
-PR: https://github.com/johncioni/orca-watchdog/pull/56
+A message-start marker (`chrome.outputStart`), outage payload or retry line below the reached line,
+above the input box, stales the limit; prose does not (banners carry `Tip:` lines). `pick` keeps a limit
+over an outage only if its reached line is at or below it: anchoring on the last relevant line let
+`Service Unavailable` revive a stale limit. Runs on every platform: replay recorded screens on changes.
+PR: https://github.com/johncioni/orca-watchdog/pull/60, https://github.com/johncioni/orca-watchdog/pull/62, https://github.com/johncioni/orca-watchdog/pull/64
 
 ## 2026-09-22: Orca list and read results are weak evidence of a closed terminal
 

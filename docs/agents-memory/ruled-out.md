@@ -2,6 +2,20 @@
 
 Newest first. Format and rules: `README.md` in this directory.
 
+## 2026-11-08: Interactive Console sessions on the promotional credit
+
+The spike found the server bills that credit for SDK-tagged requests (`claude -p`) and refuses every
+interactive request on the same login (`credit balance is too low`). Setting the SDK entrypoint would
+misreport the client, so the wrapper never does it; John funded a prepaid balance instead.
+PR: https://github.com/johncioni/orca-watchdog/pull/120
+
+## 2026-11-08: Overflow by watchdog-driven relaunch or by swapping credentials
+
+Having the watchdog relaunch Claude itself means typing shell commands into every terminal and
+recognising shell prompts. Swapping stored credentials under running sessions relies on an
+undocumented re-read and switches every session at once. John chose a wrapper that relaunches on `/exit`.
+PR: https://github.com/johncioni/orca-watchdog/pull/119
+
 ## 2026-10-31: Narrowing Codex's model-limit name so it cannot supply a reset
 
 Restricting the name's characters (DOG-74) would make an unexpected server name match no form,
@@ -32,13 +46,6 @@ opencode on this machine, and the watchdog exists for the agents that run here. 
 also provider-agnostic, so Phase 5 of DOG-35 could only ever notify, never resume. Reopen
 only if one runs real work here; the design is in the multi-agent plan, "Degraded mode (Tier-2)".
 PR: https://github.com/johncioni/orca-watchdog/pull/68
-
-## 2026-09-23: A word boundary on `available` alone for DOG-59
-
-`\bavailable` fixed one of five shapes that revived a stale limit. `⎿` error and retry
-lines are trailing chrome, so they never trip the final-block guard, and `try again later`
-is reset wording by itself. The fix stales the limit on outage or retry lines instead.
-PR: https://github.com/johncioni/orca-watchdog/pull/64
 
 ## 2026-09-23: An exclusive fallback boundary at the marker line
 
@@ -85,12 +92,4 @@ Nine anchored patterns matched only the narrow Fable layout, so on the wide Opus
 layout the outage went undetected. Treating the split `Usage … (resets in …)` line
 as chrome while it stayed limit evidence also made a resume fire at the footer's
 time, not the banner's. Replaced by the input-box rule (decisions.md).
-PR: https://github.com/johncioni/orca-watchdog/pull/50
-
-## 2026-09-22: Fixing only the `⏺` glyph for DOG-48
-
-Adding `⏺` to the outage regex alone detected nothing on the real terminals: the
-wrapped continuation lines, `✻ Worked for …`, the `❯` box, and the statusline
-all failed the final-block chrome check. Verbatim captures, not the ticket
-text, defined the fixture.
 PR: https://github.com/johncioni/orca-watchdog/pull/50
