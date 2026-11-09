@@ -2,7 +2,7 @@
 
 All notable changes to Orca Watchdog are documented here.
 
-## Unreleased
+## 1.3.1 - 2026-11-09
 
 ### Fixed
 
