@@ -3,9 +3,9 @@
 Amends `docs/superpowers/plans/2026-11-08-console-credit-overflow.md` and
 amendments 1-3. Where a rule below differs from any of them, this file
 wins. Sources: DOG-83 and DOG-84 (follow-ups from Task 4's reviews), and
-John's decision on DOG-84 of 2026-11-09.
+John's decisions on DOG-84 and DOG-83 of 2026-11-09.
 
-## A14 (DOG-83): after `clear-credit`, only a later Claude launch can mark credit
+## A14 (DOG-83): a session showing the billing error switches back to Max (John)
 
 ### The gap
 
@@ -19,50 +19,67 @@ and sets the mark again, so clearing does nothing until every such line
 scrolls out of the read window or the session switches back at the Max
 reset.
 
-### Rule
+### Ruled out
 
-A screen line carries no identity or time: a count or fingerprint of
-billing lines cannot tell a repainted old error (`/resume`, a relaunch)
-from a new failed turn, and an 18-line window drops old lines as new ones
-arrive (round-1 review of this amendment). So the mark is scoped to the
-Claude launch that showed it, which the controller does know:
+A screen line carries no identity or time, so the controller cannot tell
+an old billing line from a new one by counting or fingerprinting lines
+(a `/resume` repaints history; the 18-line window drops old lines as new
+ones arrive). Scoping marks to Claude launches after the last clear
+(round 2 of this amendment) misses a session already running at the clear
+that later exhausts the new credit, after which Max-limited sessions keep
+switching to Console and a refused turn clears each one's `/goal` (spike
+item 4). Both were dropped (round-1 and round-3 reviews).
 
-- `clear-credit` sets `creditClearedAt = now` as well as nulling
-  `creditExhaustedUntil`. `readMode` accepts `creditClearedAt` as an
-  optional ISO time or null; a malformed value reads as null. (This
-  replaces Task 3's "`clear-credit` nulls only `creditExhaustedUntil`".)
-- A Console-mode registration's billing line marks credit (as today)
-  only when `creditClearedAt` is null or the registration's `launchedAt`
-  (set at each launch, so per generation) is later than
-  `creditClearedAt`. A Claude launched before the clear never marks again.
+### Rule (John chose: move errored sessions to Max)
 
-Consequences, accepted by the orchestrator (neither charges money: an
-out-of-credit request is refused, spike item 6; but a refused turn clears
-an active `/goal`, spike item 4):
-- **Missed mark:** after a clear, a session launched before it that fails
-  again does not mark. Credit then still reads available, so the next
-  Max-limited session switches to Console, and its first turn is refused
-  and clears its goal, where with the mark it would have waited on Max
-  with its goal intact. That refusal puts a billing line on a post-clear
-  launch, which the next tick marks. Since `SWITCHES_TO_CONSOLE_PER_TICK`
-  is 1, a miss costs about one extra session's failed turn and its goal.
-  It needs credit to run out first in a pre-clear session, one that had
-  already hit billing and is used again by hand (nothing resumes those:
-  their `limit` and `credits` events stay suppressed).
-- **False mark:** a Console launch after the clear whose resumed screen
-  repaints an old billing line from that conversation marks once. Overflow
-  then sends new launches to Max until the next `clear-credit`, which
-  `overflow status` shows. Nothing is lost but overflow time.
+- **Current billing line.** A billing line counts only while it is the
+  newest output above the input box: a message-start marker (registry
+  `chrome.outputStart`, `⏺` for Claude) below it makes it stale, as for
+  limits (decisions.md, 2026-09-23). A stale billing line neither marks
+  credit nor triggers a switch.
+- **Mark, as today.** A current billing line on a Console-mode
+  registration sets `creditExhaustedUntil` to the next 1st of the month
+  00:00 UTC.
+- **Switch back.** The same registration is also a `to: max` candidate on
+  that tick, although `switchBackDue` is false. Every other switch-back
+  condition and guard still applies: a valid registration with a read,
+  no request, not in `noSwitch`, no A15 entry with `nextAt` in the future,
+  session agreement, pid-file status idle, and every phase-5 guard
+  (dry run, kill switch, `tui-idle` wait, fresh read, foreground re-check,
+  shell prompt, draft). The phase-5 fresh read must still show a current
+  billing line, or nothing is sent. The request is an ordinary `to: max`
+  request: its outcomes follow the transition table, A3 and A15 (a
+  failure while still on Console is a counted failure, retried every
+  `SWITCH_BACK_RETRY_MS`, then pinned with the stuck alert).
+- The relaunch is on Max with `MAX_MESSAGE`. Its first turn meets the Max
+  limit, which the ordinary path resumes at the reset; the billing error
+  already cleared any `/goal` (spike item 4).
+- This replaces the plan's "a credit mark alone never triggers it" for
+  sessions showing a current billing line. A mark still triggers nothing
+  for a Console session not showing one: it is still working on the
+  credit it has, and it switches when its own turn is refused or at the
+  Max reset.
+- `clear-credit` is unchanged: it nulls only `creditExhaustedUntil`.
 
-Tests (Task 4's and Task 3's files): with no clear, a billing line marks,
-as today. After `clear-credit`, a registration launched before the clear
-showing the same line does not mark, on this tick or later; a
-registration whose `launchedAt` is after the clear and shows a billing
-line marks. `/clear` and `/resume` inside a pre-clear generation never
-mark. `clear-credit` writes `creditClearedAt` and nulls
-`creditExhaustedUntil` and changes no other field. A malformed
-`creditClearedAt` reads as null without resetting the other mode fields.
-Dry run leaves the mode file byte-identical.
+Result: once the errored sessions have switched, no Console session shows
+a current billing line, so a clear sticks. Until one has switched (a
+draft, a busy status, a failed read, a pending retry, a pinned wrapper)
+its current line keeps re-marking after a clear. That is visible in
+`overflow status` (the session is listed on Console, and a pinned one has
+A15's stuck line), and it stops when the session switches or the person
+exits it.
+
+Tests (Task 4's files): a Console registration with a current billing
+line marks credit and gets a `to: max` request before the Max deadline;
+the same with a `⏺` line below the billing line neither marks nor
+switches. A busy status, a draft, `noSwitch`, an A15 entry with a future
+`nextAt`, or a session disagreement gives the mark but no request. A
+phase-5 fresh read without a current billing line sends nothing and
+writes no request. A Console registration without a billing line is not
+switched while credit is marked. After the switch confirms, the
+registration is on Max, and the next tick's `clear-credit` stays cleared.
+A failed billing switch-back still on Console gets an A15 entry. Dry run
+writes nothing.
 
 ## A15 (DOG-84): a session left on Console retries switching back, then alerts (John)
 
