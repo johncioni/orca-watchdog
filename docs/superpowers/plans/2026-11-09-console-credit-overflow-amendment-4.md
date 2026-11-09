@@ -32,25 +32,52 @@ item 4). Both were dropped (round-1 and round-3 reviews).
 
 ### Rule (John chose: move errored sessions to Max)
 
-- **Current billing line.** A billing line counts only while it is the
-  newest output above the input box: a message-start marker (registry
-  `chrome.outputStart`, `⏺` for Claude) below it makes it stale, as for
-  limits (decisions.md, 2026-09-23). A stale billing line neither marks
-  credit nor triggers a switch.
+- **Billing line shape.** Only a line that is Claude's billing error
+  counts: after the side-panel cut and above the input box, a line that
+  starts at column 0 with `⎿`, whitespace, then exactly `Credit balance
+  too low · Add funds:` (spike item 6, seen live). The phrase anywhere
+  else (quoted in an answer, in a tool result, after other text) is not
+  a billing line, for the mark as well as the switch.
+- **Current billing line.** A billing line is current only when every
+  line below it, up to the input box, is blank, trailing chrome
+  (registry `chrome.trailing`), or the line Claude prints when the error
+  clears a goal (spike item 4: `Goal cleared after an unrecoverable error
+  (credit balance too low)`). Anything else below it (a `⏺` answer, a
+  submitted prompt, an outage payload such as the Console 429, a retry
+  line) means the session moved on, and the line is stale. This is
+  stricter than the limit rule on purpose: it fails closed. Task 6's live
+  check captures a real billing screen, with and without a `/goal`, as a
+  fixture.
 - **Mark, as today.** A current billing line on a Console-mode
   registration sets `creditExhaustedUntil` to the next 1st of the month
   00:00 UTC.
 - **Switch back.** The same registration is also a `to: max` candidate on
-  that tick, although `switchBackDue` is false. Every other switch-back
-  condition and guard still applies: a valid registration with a read,
-  no request, not in `noSwitch`, no A15 entry with `nextAt` in the future,
-  session agreement, pid-file status idle, and every phase-5 guard
-  (dry run, kill switch, `tui-idle` wait, fresh read, foreground re-check,
-  shell prompt, draft). The phase-5 fresh read must still show a current
-  billing line, or nothing is sent. The request is an ordinary `to: max`
-  request: its outcomes follow the transition table, A3 and A15 (a
-  failure while still on Console is a counted failure, retried every
-  `SWITCH_BACK_RETRY_MS`, then pinned with the stuck alert).
+  that tick, although `switchBackDue` is false. The request records
+  `reason: 'billing'` (an ordinary switch-back records `reason: 'reset'`;
+  a request without `reason`, as 1.3.0 writes, is a `reset` request, and
+  the wrapper keeps unknown request fields when it consumes one).
+  Every other switch-back condition and guard still applies: a valid
+  registration with a read, no request, not in `noSwitch`, no A15 entry
+  with `nextAt` in the future, session agreement, pid-file status idle,
+  and every phase-5 guard (dry run, kill switch, `tui-idle` wait, fresh
+  read, foreground re-check, shell prompt, draft). For a `billing`
+  request while `switchBackDue` is false, the phase-5 fresh read must
+  still show a current billing line, for the first send and every
+  resend, or nothing is sent. The request's outcomes follow the
+  transition table, A3 and A15 (a failure while still on Console is a
+  counted failure, retried every `SWITCH_BACK_RETRY_MS`, then pinned with
+  the stuck alert).
+- **Billing cleared.** A new transition, after the A12 row and before the
+  resend row: a `pending` `billing` request whose `sentAt` is older than
+  `RELAUNCH_WINDOW_MS`, while `switchBackDue` is false, and whose
+  handle's read this tick succeeded and shows no current billing line, is
+  **superseded** (A3 with `kind: 'supersede'`, `reason:
+  'billing-cleared'`: informational `lastError`, snapshot restored,
+  request deleted, no `noSwitch`, no A15 count, no `/exit`). A failed
+  read holds. Once `switchBackDue` is true the request is an ordinary
+  switch-back: it resends under the ordinary rules, without the billing
+  requirement. Inside `RELAUNCH_WINDOW_MS` the hold row applies, so a
+  delivered `/exit` is consumed as usual.
 - The relaunch is on Max with `MAX_MESSAGE`. Its first turn meets the Max
   limit, which the ordinary path resumes at the reset; the billing error
   already cleared any `/goal` (spike item 4).
@@ -69,17 +96,34 @@ its current line keeps re-marking after a clear. That is visible in
 A15's stuck line), and it stops when the session switches or the person
 exits it.
 
-Tests (Task 4's files): a Console registration with a current billing
-line marks credit and gets a `to: max` request before the Max deadline;
-the same with a `⏺` line below the billing line neither marks nor
-switches. A busy status, a draft, `noSwitch`, an A15 entry with a future
-`nextAt`, or a session disagreement gives the mark but no request. A
-phase-5 fresh read without a current billing line sends nothing and
-writes no request. A Console registration without a billing line is not
-switched while credit is marked. After the switch confirms, the
-registration is on Max, and the next tick's `clear-credit` stays cleared.
-A failed billing switch-back still on Console gets an A15 entry. Dry run
-writes nothing.
+Tests (Task 4's files):
+- A Console registration whose read ends with the live billing line and
+  the closed input box marks credit and gets a `to: max` request with
+  `reason: 'billing'` before the Max deadline. The same screen with the
+  goal-cleared line below it does the same.
+- Neither a mark nor a request for: the phrase inside a `⏺` answer above
+  the input box; the phrase in a tool result line; the billing line with
+  a later `⏺` answer below it; the billing line followed by a submitted
+  prompt and a Console 429 line (no `⏺` between them). Each is checked at
+  observation and at the phase-5 fresh read.
+- A busy status, a draft, `noSwitch`, an A15 entry with a future
+  `nextAt`, or a session disagreement gives the mark but no request.
+- A phase-5 fresh read without a current billing line sends nothing and
+  writes no request.
+- A Console registration without a billing line is not switched while
+  credit is marked.
+- Billing cleared, across a restart: a `billing` request commits attempt
+  1, the send is not delivered, the daemon restarts, and the next read
+  past `RELAUNCH_WINDOW_MS` shows a stale billing line (a `⏺` answer
+  below it): the request is superseded with `billing-cleared`, the
+  snapshot restored, no A15 entry, no `/exit`, and the handle's ordinary
+  sends resume on the following tick (no `suppress: 'all'`). The same
+  with a failed read holds. The same with `switchBackDue` true resends
+  without a billing line.
+- After a billing switch confirms, the registration is on Max, and a
+  following `clear-credit` stays cleared.
+- A failed billing switch-back still on Console gets an A15 entry.
+- Dry run writes nothing.
 
 ## A15 (DOG-84): a session left on Console retries switching back, then alerts (John)
 
