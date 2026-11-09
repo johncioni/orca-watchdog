@@ -98,10 +98,13 @@ live registrations (including session ID prefixes), and pending or consumed requ
 .B clear\-credit
 Clear only the exhausted\-credit mark; preserve the window and switch evidence.
 .PP
-Before each Console launch, claude\-overflow syncs project trust and external
-import approvals from the Max config under Claude's lock directory.
+Before each Console launch, claude\-overflow copies project trust from the Max
+config under Claude's lock directory. For every such project, it marks external
+CLAUDE.md imports approved and the import warning shown, even if Max never
+approved those imports or declined them. Console loads those imports without asking.
 Repository subdirectories and linked worktrees use the main repository's key.
-A missing Max project entry, missing trust, or lock timeout launches on Max
+A missing exact Max project entry, missing trust at that key or an ancestor,
+or lock timeout launches on Max
 and records the cwd and reason in the activity log.
 .B doctor
 reports setup readiness without inspecting credentials.

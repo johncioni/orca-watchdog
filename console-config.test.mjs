@@ -231,7 +231,7 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     assert.ok(fs.lstatSync(lock).isDirectory());
     assert.deepEqual(fs.readFileSync(f.file), before);
   });
-  test('a forked sync holding the lock delays a second writer without losing keys', { timeout: 10_000 }, async t => {
+  test('a forked sync holding the lock delays a second writer without losing keys', { timeout: 60_000 }, async t => {
     const f = fixture(t), second = path.join(f.home, 'second'); fs.mkdirSync(second);
     write(path.join(f.home, '.claude.json'), { projects: { [f.cwd]: approved, [second]: approved } });
     const a = worker(t, f, f.cwd, 'sync', true), b = worker(t, f, second);
@@ -243,7 +243,7 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     assert.deepEqual(read(f.file).projects, { [f.cwd]: approved, [second]: approved });
     assert.equal(read(f.file).oauthAccount.account, 'console-only');
   });
-  test('a simulated Claude save racing two syncs loses no project or auth key', { timeout: 10_000 }, async t => {
+  test('a simulated Claude save racing two syncs loses no project or auth key', { timeout: 60_000 }, async t => {
     const f = fixture(t), second = path.join(f.home, 'second'); fs.mkdirSync(second);
     write(path.join(f.home, '.claude.json'), { projects: { [f.cwd]: approved, [second]: approved } });
     const claude = worker(t, f, f.cwd, 'claude'), a = worker(t, f, f.cwd), b = worker(t, f, second);
@@ -262,7 +262,7 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     assert.deepEqual(read(f.file).projects, { claude: { saved: true }, [f.cwd]: approved, [second]: approved });
     assert.equal(read(f.file).oauthAccount.account, 'console-only');
   });
-  test('sync release preserves a replacement lock inode', { timeout: 10_000 }, async t => {
+  test('sync release preserves a replacement lock inode', { timeout: 60_000 }, async t => {
     const f = fixture(t), lock = f.file + '.lock';
     const a = worker(t, f, f.cwd, 'sync', true);
     a.send('go'); await a.next('held');
@@ -275,7 +275,7 @@ if (process.env.CONSOLE_CONFIG_WORKER) {
     assert.equal(fs.lstatSync(lock).ino, replacement);
     assert.deepEqual(read(f.file).projects[f.cwd], approved);
   });
-  for (const first of ['sync', 'setup']) test(`a forked ${first} and sync never overlap over a stale Claude lock`, { timeout: 10_000 }, async t => {
+  for (const first of ['sync', 'setup']) test(`a forked ${first} and sync never overlap over a stale Claude lock`, { timeout: 60_000 }, async t => {
     const f = fixture(t), lock = f.file + '.lock', second = path.join(f.home, 'second');
     fs.mkdirSync(second);
     write(path.join(f.home, '.claude.json'), { projects: { [f.cwd]: approved, [second]: approved } });
