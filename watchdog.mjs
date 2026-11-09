@@ -1345,13 +1345,13 @@ function overflowBilling(tail) {
     let rest = match[2].replace(/\s/g, ''), next = index + 1;
     if (rest !== url && url.startsWith(rest)) {
       for (let count = 0; count < 2 && next < end && rest !== url; count++) {
-        const continuation = /^(\s*)(\S+)$/.exec(source[next]);
+        const continuation = /^(\s*)(\S+)$/.exec(source[next].trimEnd());
         if (!continuation || continuation[1].length !== match[1].length
           || !url.startsWith(rest + continuation[2])) break;
         rest += continuation[2]; next++;
       }
       if (rest !== url) return false;
-    } else if (!/^https:\/\/\S+$/.test(rest)) return false;
+    }
     for (; next < end; next++) {
       const text = window[next];
       if (text === '' || providerFor('claude').chrome.trailing.some(re => re.test(text))) continue;

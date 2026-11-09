@@ -615,6 +615,9 @@ for (const [name, line] of [
   ['deeper indent', `       ${billingLine.trimStart()}`],
   ['exact tool-result residual', billingLine],
   ['different URL residual', '  ⎿  Credit balance too low · Add funds: https://example.com/billing'],
+  ['scheme-less same-line remainder', '  ⎿  Credit balance too low · Add funds: platform.claude.com/settings/billing'],
+  ['http same-line remainder', '  ⎿  Credit balance too low · Add funds: http://platform.claude.com/settings/billing'],
+  ['path same-line remainder', '  ⎿  Credit balance too low · Add funds: /usage-credits'],
 ]) test(`A16: ${name} marks and switches`, async t => {
   const h = await consoleSetup(t); h.tail = [line, ...billingFooter]; await h.run();
   assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
@@ -883,6 +886,18 @@ test('DOG-86: an older busy Max trigger does not consume the Console admission s
   const p = planOverflow(i);
   assert.deepEqual(p.switches.map(({ handle, to }) => ({ handle, to })), [{ handle: b.handle, to: 'console' }]);
   assert.deepEqual(p.idleHolds, [{ handle: H, status: 'busy' }]);
+});
+
+for (const width of [80, 100]) test(`A16: wrapped billing URL under a side panel at column ${width} marks and switches`, async t => {
+  const h = await consoleSetup(t);
+  const rows = ['', '', '', '', '', '',
+    '  ⎿  Credit balance too low · Add funds:', '     https://platform.claude.com/settings/billing']
+    .map(text => text.padEnd(width) + '││ task status');
+  h.tail = [...rows, ...billingFooter]; await h.run();
+  assert.equal(store.readMode(h.opts).creditExhaustedUntil, '2026-12-01T00:00:00.000Z');
+  const q = store.readRequest(H, h.opts);
+  assert.equal(q?.to, 'max'); assert.equal(q?.reason, 'billing'); assert.equal(q?.attempts, 1);
+  assert.deepEqual(h.sends().map(a => a[5]), ['/exit']);
 });
 
 for (const location of ['chat', 'panel']) test(`A14: side-panel geometry preserves only ${location === 'chat' ? 'chat billing' : 'non-billing chat'}`, async t => {
