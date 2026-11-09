@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd -P)"
+  TARGET="$(/usr/bin/readlink "$SCRIPT")"
+  case "$TARGET" in
+    /*) SCRIPT="$TARGET" ;;
+    *) SCRIPT="$SCRIPT_DIR/$TARGET" ;;
+  esac
+done
+ROOT="$(cd "$(dirname "$SCRIPT")/.." && pwd -P)"
+SCRIPT="$ROOT/bin/claude-overflow"
+CLAUDE_BIN="${CLAUDE_OVERFLOW_CLAUDE:-}"
+if [ -z "$CLAUDE_BIN" ]; then
+  OLD_IFS="$IFS"
+  IFS=:
+  for DIR in $PATH; do
+    CANDIDATE="${DIR:-.}/claude"
+    [ -f "$CANDIDATE" ] && [ -x "$CANDIDATE" ] || continue
+    while [ -L "$CANDIDATE" ]; do
+      TARGET="$(/usr/bin/readlink "$CANDIDATE")"
+      case "$TARGET" in
+        /*) CANDIDATE="$TARGET" ;;
+        *) CANDIDATE="$(dirname "$CANDIDATE")/$TARGET" ;;
+      esac
+    done
+    RESOLVED="$(cd "$(dirname "$CANDIDATE")" && pwd -P)/$(basename "$CANDIDATE")"
+    if [ "$RESOLVED" != "$SCRIPT" ]; then CLAUDE_BIN="$RESOLVED"; break; fi
+  done
+  IFS="$OLD_IFS"
+fi
+[ -n "$CLAUDE_BIN" ] || { echo 'error: claude not found on PATH' >&2; exit 127; }
+if [ -z "${ORCA_TERMINAL_HANDLE:-}" ] || [ ! -f "$HOME/.local/state/orca-watchdog/overflow/enabled" ]; then
+  exec "$CLAUDE_BIN" "$@"
+fi
+NODE_BIN="${ORCA_WATCHDOG_NODE:-$(command -v node || true)}"
+[ -n "$NODE_BIN" ] || { echo 'error: node not found; install Node 22 or newer' >&2; exit 1; }
+export CLAUDE_OVERFLOW_CLAUDE="$CLAUDE_BIN"
+exec "$NODE_BIN" "$ROOT/bin/claude-overflow.mjs" "$@"

@@ -2,6 +2,12 @@
 
 All notable changes to Orca Watchdog are documented here.
 
+## Unreleased
+
+### Added
+
+- Ship the opt-in `claude-overflow` wrapper in Homebrew, with exclusive terminal ownership, shared Console resume admission, and session-preserving account switches. Console launches disable the advisor; Max launches retain the incoming environment. Setup and the automatic switch controller remain pending. (DOG-81)
+
 ## 1.2.21 - 2026-11-08
 
 ### Fixed
