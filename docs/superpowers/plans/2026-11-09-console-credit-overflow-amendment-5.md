@@ -35,12 +35,20 @@ bullets. Everything else in A14 stands.
   line whose text, with leading whitespace removed, starts with `⎿`,
   whitespace, then exactly `Credit balance too low · Add funds:`. Any
   indentation is allowed (Claude draws it at column 2).
-- **Its continuation.** Up to 4 lines directly below it that start with
-  whitespace (the registry's `claude-api-error` envelope
-  `continuation`, `/^[ \t]+\S/`, `maxLines: 4`) belong to it: the wrapped
-  URL, and any hint line Claude adds under the error, as the limit banner
-  adds `/upgrade …`. A line starting with `⏺`, `⎿`, `❯` or `>` after its
-  indentation ends the continuation.
+- **Its continuation: the wrapped URL only.** A line directly below the
+  billing line (or below an earlier continuation line) belongs to it only
+  when its first non-blank character is in exactly the column where the
+  billing line's text starts after `⎿` and its whitespace (Claude's
+  hanging indent: column 5 when `⎿` is at column 2), and it contains no
+  whitespace after that indentation. At most 2 such lines. The billing
+  line's text after `Add funds:`, plus those lines, with whitespace
+  removed and joined with no separator, must read `https://` followed by
+  non-whitespace (the wrapped URL), or the billing line is not a billing
+  line. Nothing else is continuation: a line with words in it (a retry
+  line, a Console 429, `Read 1 file`, a hint) or at another indent is
+  ordinary output below the billing line, judged by **Current**. A hint
+  line under the billing error has not been seen; if Task 6's capture
+  shows one, it comes back as an amendment.
 - **Current.** The billing line is current when every line after its
   continuation, up to the input box, is blank, Claude registry
   `chrome.trailing`, or the goal-cleared notice. The notice is one line,
@@ -68,21 +76,27 @@ remains the authority on the exact shape. If it differs from this rule,
 it comes back as a plan amendment before any code change.
 
 Tests (the controller task's files; screens built from this repo's real
-captures' indentation, wrap and markers):
-- The billing line at column 2 with the URL on the same line; the same
-  wrapped so the URL is on a 5-space continuation (55 and 80 columns);
-  the same with an indented hint line under it. Each marks credit and,
-  before the deadline on an idle valid registration, creates a `billing`
-  request and sends one `/exit`.
-- Each of those followed by `⏺ Goal cleared after an unrecoverable error
+captures' indentation, wrap and markers). Every fixture states its
+expected credit mark, request and `/exit` count as literals; no
+expectation is derived from another predicate or from 1.3.0's rule.
+- Current (mark; before the deadline on an idle valid registration, a
+  `billing` request and one `/exit`): the billing line at column 2 with
+  the URL on the same line; the same wrapped so the URL is on a
+  column-5 line (55 columns), and split across two column-5 lines; each
+  of those followed by `⏺ Goal cleared after an unrecoverable error
   (credit balance too low)` on one line, and by the same notice wrapped
-  onto a column-0 second line: same result.
-- Not billing, or stale, at observation, fresh read and resend: the
-  phrase inside a `⏺` answer; the phrase after other text on a `⎿` line;
-  a column-2 billing line followed by a `⏺` answer; by a submitted prompt
-  and a column-2 Console 429; by a `⏺` line that is not the notice.
+  onto a column-0 second line.
+- Not current (no new mark, no request, no `/exit`, at observation,
+  fresh read and resend), each directly under the complete billing line
+  and again directly under its wrapped URL line: an indented retry line
+  (`Retrying in 5s… (attempt 2/10)` at column 5 and at column 2); a bare
+  indented `API Error: Request rejected (429) · …` with no prompt before
+  it; an indented `Read 1 file`; a column-5 line with words in it; a
+  `⏺` answer; a `⏺` line that is not the notice; a submitted prompt and
+  a column-2 Console 429.
+- Not a billing line at all: the phrase inside a `⏺` answer; the phrase
+  after other text on a `⎿` line; the billing line whose joined URL does
+  not start with `https://`.
 - A pending `billing` request past the window whose registration fails
   the foreground check this tick, with the billing screen still current:
   holds (no outcome, attempts unchanged); the next valid tick resends.
-- 1.3.0 parity: every screen above that 1.3.0's substring rule marked
-  and this rule calls current still marks.
