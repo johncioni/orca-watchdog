@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseClaudeArgv, resolveModel, isEligibleModel } from '../lib/claude-argv.mjs';
+import { syncConsoleProject } from '../lib/console-config.mjs';
 import { appendActivity } from '../lib/logs.mjs';
 import { overflowPaths, isEnabled, readMode, launchMode, claimHandle, updateRegistration, releaseHandle,
   updateRequest, takeAdmission, RELAUNCH_WINDOW_MS, SESSION_POLL_MS, SETTLE_MS,
@@ -119,9 +120,11 @@ export async function runWrapper({ argv = process.argv.slice(2), env = process.e
       let reason = record && mode !== record.to ? 'mode' : 'ok';
       if (consumed && !record) { mode = 'max'; reason = 'mode'; }
       if (mode === 'console') {
-        // Task 3 replaces this readiness result with syncConsoleProject(entry.cwd, opts).
-        const preflight = { ok: true };
-        if (!preflight.ok) { mode = 'max'; reason = `preflight:${preflight.reason}`; }
+        const preflight = await syncConsoleProject(entry.cwd, opts);
+        if (!preflight.ok) {
+          mode = 'max'; reason = `preflight:${preflight.reason}`;
+          report(`Console preflight for ${entry.cwd}: ${preflight.reason}; launching on Max`);
+        }
       }
       if (mode === 'console' && (relaunch || parsed.selector === 'resume-id')) {
         if (record && +now() - Date.parse(record.consumedAt) >= ADMISSION_GIVE_UP_MS) {

@@ -6,7 +6,8 @@ All notable changes to Orca Watchdog are documented here.
 
 ### Added
 
-- Ship the opt-in `claude-overflow` wrapper in Homebrew, with exclusive terminal ownership, shared Console resume admission, and session-preserving account switches. Console launches disable the advisor; Max launches retain the incoming environment. Setup and the automatic switch controller remain pending. (DOG-81)
+- Add `orca-watchdog overflow setup|enable|disable|status|clear-credit` and setup checks in `doctor`. Console setup shares the six approved user entries without copying credentials, and the wrapper syncs project approvals under Claude's config lock before each Console launch. Missing trust or a lock timeout keeps the session on Max and logs the reason. (DOG-81)
+- Ship the opt-in `claude-overflow` wrapper in Homebrew, with exclusive terminal ownership, shared Console resume admission, and session-preserving account switches. Console launches disable the advisor; Max launches retain the incoming environment. The automatic switch controller remains pending. (DOG-81)
 
 ## 1.2.21 - 2026-11-08
 

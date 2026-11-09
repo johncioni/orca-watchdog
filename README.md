@@ -139,7 +139,31 @@ created owner-only (`0600`).
 
 ## Claude overflow wrapper
 
-Homebrew also installs `claude-overflow`, which accepts Claude Code’s launch arguments. Overflow is off by default. This release includes the wrapper and shared state; Console setup and the automatic switch controller are still pending.
+Homebrew also installs `claude-overflow`, which accepts Claude Code’s launch arguments. Overflow is off by default. This release includes Console setup and the wrapper; the automatic switch controller is still pending.
+
+Prepare the Console account before enabling overflow:
+
+```bash
+orca-watchdog overflow setup
+CLAUDE_CONFIG_DIR="$HOME/.claude-console" claude
+```
+
+In that Claude session, use `/login` with your Console account, then exit. Setup does not copy credentials or log you in. Keep the config path exactly as printed by setup: Claude uses that string to select its Keychain credentials.
+
+Setup shares six entries from `~/.claude` when they exist: `projects`, `settings.json`, `plugins`, `skills`, `agents`, and `commands`. It leaves conflicting entries untouched and lists them as `skipped`. It creates an empty, read-only `agent-memory/` and seeds onboarding without changing account fields. It never links `CLAUDE.md`, `.claude.json`, or credentials.
+
+Running setup again keeps existing correct links.
+
+Enable overflow and inspect its state:
+
+```bash
+orca-watchdog overflow enable
+orca-watchdog overflow status
+```
+
+`enable` refuses until setup is ready. `status` shows the current launch mode, window deadline, credit mark, last error, blocked switches, live registrations, and requests. `orca-watchdog doctor` also reports whether setup is ready; it does not check your login.
+
+Use `orca-watchdog overflow disable` to prevent new Console launches. `orca-watchdog overflow clear-credit` clears only the exhausted-credit mark, leaving the window and switch evidence intact. These commands do not start or stop the service.
 
 Run an eligible session with an explicit model:
 
@@ -148,6 +172,8 @@ claude-overflow --model claude-opus-5-5 "Continue the implementation"
 ```
 
 Without enabled overflow or an Orca terminal handle, the wrapper runs Claude unchanged. When enabled, it tracks Opus and Sonnet sessions by their current session ID. Fable and unresolved models stay on Max. Print mode, unknown options, `--continue`, the resume picker, and forked sessions run without registration.
+
+Before each Console launch, the wrapper copies the project's trust and external-import approvals from the Max config. Repository subdirectories and linked worktrees use the main repository's project key. Without an exact Max project entry and trust for it or an ancestor, the session launches on Max and logs the reason. A config lock timeout also falls back to Max. Config writes coordinate with Claude through its lock directory.
 
 A matching switch request resumes the same conversation. Console launches use `~/.claude-console`, remove `--advisor`, and disable the advisor tool. Max launches restore the incoming environment and advisor arguments. Both preserve `CLAUDE_CODE_TMPDIR`. Console resumes share one admission slot per minute, including direct `--resume` launches.
 

@@ -13,6 +13,7 @@ _orca-watchdog() {
     'pause:Disable all watchdog activity without deleting state'
     'resume:Re-enable watchdog activity'
     'status:Show service health, pause state, and active events'
+    'overflow:Configure and inspect Console account overflow'
     'logs:Show recent activity or launchd output (read-only)'
   )
 
@@ -29,6 +30,9 @@ _orca-watchdog() {
       ;;
     args)
       case $line[1] in
+        overflow)
+          _arguments '1:overflow command:(setup enable disable status clear-credit)'
+          ;;
         logs)
           _arguments \
             '--follow[Follow the log as it grows]' \
