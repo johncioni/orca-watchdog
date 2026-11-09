@@ -5,7 +5,7 @@ amendments 1-3. Where a rule below differs from any of them, this file
 wins. Sources: DOG-83 and DOG-84 (follow-ups from Task 4's reviews), and
 John's decision on DOG-84 of 2026-11-09.
 
-## A14 (DOG-83): a billing line marks credit only when it is new
+## A14 (DOG-83): after `clear-credit`, only a later Claude launch can mark credit
 
 ### The gap
 
@@ -21,47 +21,55 @@ reset.
 
 ### Rule
 
-- The controller keeps, in the mode file, `billingSeen`: an object from
-  `<handle>:<wrapperPid>:<generation>` to the number of billing lines in
-  that handle's last successful read window (above the input box, as
-  today).
-- On each successful read of a Console-mode registration, with `n` billing
-  lines: the handle marks credit (as today) only when `n` is greater than
-  its stored count (a missing key counts as 0); then the stored count
-  becomes `n`, whether it rose, fell or stayed. A failed or missing read
-  changes nothing.
-- Keys whose registration or generation is gone are pruned on the same
-  tick, as `noSwitch` entries are.
-- `clear-credit` clears only `creditExhaustedUntil`, as today, and leaves
-  `billingSeen`, so lines already on screen at the clear never mark
-  again. A new failed turn adds a line, raises `n`, and marks.
-- `--dry-run` writes nothing, as for every mode change.
+A screen line carries no identity or time: a count or fingerprint of
+billing lines cannot tell a repainted old error (`/resume`, a relaunch)
+from a new failed turn, and an 18-line window drops old lines as new ones
+arrive (round-1 review of this amendment). So the mark is scoped to the
+Claude launch that showed it, which the controller does know:
 
-Residual, accepted: a relaunch is a new generation, so if a resumed
-session's screen repaints an old billing line inside the read window, it
-marks once. That needs a session that hit billing on Console, switched to
-Max and later back to Console with the old error still in the last
-screenful; `clear-credit` then clears it for good.
+- `clear-credit` sets `creditClearedAt = now` as well as nulling
+  `creditExhaustedUntil`. `readMode` accepts `creditClearedAt` as an
+  optional ISO time or null; a malformed value reads as null. (This
+  replaces Task 3's "`clear-credit` nulls only `creditExhaustedUntil`".)
+- A Console-mode registration's billing line marks credit (as today)
+  only when `creditClearedAt` is null or the registration's `launchedAt`
+  (set at each launch, so per generation) is later than
+  `creditClearedAt`. A Claude launched before the clear never marks again.
 
-Tests (Task 4's files): a Console handle shows one billing line → marked;
-`clear-credit`; the same read next tick → not marked; a second billing
-line appears → marked. A read with two lines then one then two → marked
-on the first and the last read only. A failed read between two identical
-reads changes nothing. A key for a gone generation is pruned. Dry run
-leaves the mode file byte-identical.
+Consequences, accepted (neither charges money: an out-of-credit request
+is refused, spike item 6):
+- **Missed mark:** after a clear, a session launched before it that fails
+  again does not mark. The next Console launch that fails marks. Until
+  then, Max-limited sessions may still switch to Console and fail there,
+  as they would have stalled on Max anyway.
+- **False mark:** a Console launch after the clear whose resumed screen
+  repaints an old billing line from that conversation marks once. Overflow
+  then sends new launches to Max until the next `clear-credit`, which
+  `overflow status` shows.
 
-## A15 (DOG-84): a failed switch back to Max retries later, then alerts (John)
+Tests (Task 4's and Task 3's files): with no clear, a billing line marks,
+as today. After `clear-credit`, a registration launched before the clear
+showing the same line does not mark, on this tick or later; a
+registration whose `launchedAt` is after the clear and shows a billing
+line marks. `/clear` and `/resume` inside a pre-clear generation never
+mark. `clear-credit` writes `creditClearedAt` and nulls
+`creditExhaustedUntil` and changes no other field. A malformed
+`creditClearedAt` reads as null without resetting the other mode fields.
+Dry run leaves the mode file byte-identical.
+
+## A15 (DOG-84): a session left on Console retries switching back, then alerts (John)
 
 ### The gap
 
-A `to: max` request that ends in **cancel** (`switch retries exhausted`,
-`generation mismatch`, `wrapper ownership lost`) or **fail** (any A2 or
-confirm reason) adds `<handle>:<W>` to `noSwitch`, which blocks switches
-in both directions for that wrapper. When the session is still on Console
-(Claude ignored three `/exit` sends, or the relaunch fell back to
-Console), it then runs on API credit for the wrapper's lifetime, after
-the Max limit has reset, and the only trace is `lastError` in `overflow
-status`.
+A cancel or fail of any request adds `<handle>:<W>` to `noSwitch`, which
+blocks switches in both directions for that wrapper. That is free when
+the surviving session is on Max. It is not when the survivor is on
+Console: a `to: max` request whose `/exit` sends were ignored or whose
+relaunch fell back to Console, and also a `to: console` request whose
+Console successor is running but was not confirmed within
+`CONFIRM_BOUND_MS`. That session then runs on API credit for the
+wrapper's lifetime, after the Max limit has reset, and the only trace is
+`lastError` in `overflow status`.
 
 ### Rule (John chose: retry later, then alert)
 
@@ -69,50 +77,73 @@ New plan constants:
 
 | Name | Value | Why |
 |---|---|---|
-| `SWITCH_BACK_RETRY_MS` | 30 min | wait after a failed switch back to Max before the next request |
-| `SWITCH_BACK_RETRIES` | 3 | requests after the first; at most 4 × `MAX_SWITCH_ATTEMPTS` `/exit` sends per wrapper |
+| `SWITCH_BACK_RETRY_MS` | 30 min | wait after a counted failure before the next switch back to Max |
+| `SWITCH_BACK_RETRIES` | 3 | counted failures after the first before the wrapper is pinned |
 
-- The mode file gains `switchBackRetry`: an object from `<handle>:<W>` to
-  `{ failures, nextAt, stuckAt }` (`stuckAt` null until the last failure).
-  `readMode` accepts it as optional, as it does `evidence`; a malformed
-  value reads as absent. Entries are pruned with the registration, as
-  `noSwitch` entries are.
-- A `to: max` cancel or fail no longer adds `noSwitch` while `failures`
-  (after counting this one) is at most `SWITCH_BACK_RETRIES`. Instead its
-  A3 effects set the entry to `failures + 1` and `nextAt = now +
-  SWITCH_BACK_RETRY_MS`; everything else in A3 (outcome first, restore,
-  delete, `lastError`) is unchanged. The values are computed when the
-  outcome is written, so a replay writes the same entry.
-- On the failure that makes `failures` exceed `SWITCH_BACK_RETRIES`, the
-  effects add `noSwitch` as today, set `stuckAt = now`, and the adapter
-  logs one `warn` line naming the handle and the failure count.
-- Planning: a registration with an entry whose `nextAt` is in the future
-  gets no `to: max` switch this tick (it holds, with no log). At or after
-  `nextAt`, the ordinary switch-back rule applies unchanged (Console mode,
-  `switchBackDue`, idle, no draft, every phase-5 guard).
-- A `to: max` request that confirms deletes the entry. A12 supersede and
-  a `to: console` outcome never touch it; `to: console` cancels and fails
-  keep adding `noSwitch` as today (that session stays on Max, at no cost).
-- Alert: `orca-watchdog overflow status` and `orca-watchdog doctor` each
-  print one line per entry with `stuckAt` set whose registration is still
+- **Surviving mode decides, not the request's direction.** When a cancel
+  or fail outcome is written, the controller looks at W's current
+  registration (the highest generation it holds). If W is dead or holds
+  none, nothing new is recorded (pruning clears it). If that registration
+  is in **Max** mode, the effects add `noSwitch` as today. If it is in
+  **Console** mode, the outcome is a **counted failure**:
+  - The mode file gains `switchBackRetry`: an object from `<handle>:<W>`
+    to `{ failures, nextAt, stuckAt }` (`stuckAt` null until pinned).
+    `readMode` accepts it as optional, as it does `evidence`; a malformed
+    value reads as absent without resetting other fields. Entries are
+    pruned with the registration, as `noSwitch` entries are, so a new W
+    starts with no entry.
+  - While `failures` after this one is at most `SWITCH_BACK_RETRIES`,
+    the effects set the entry to that count with `nextAt = now +
+    SWITCH_BACK_RETRY_MS` and add no `noSwitch`.
+  - On the failure that takes `failures` past `SWITCH_BACK_RETRIES`, the
+    effects add `noSwitch`, set `stuckAt = now`, and the adapter logs one
+    `warn` line naming the handle and the count.
+  - The entry is computed when the outcome is written and stored in it,
+    so A3's replay at any step writes the same entry (no double count).
+    Everything else in A3 (outcome first, `lastError`, restore, delete)
+    is unchanged.
+- **Planning:** a registration whose entry has `nextAt` in the future gets
+  no `to: max` switch this tick (it holds without a log). At or after
+  `nextAt`, the ordinary switch-back rule applies unchanged: Console mode,
+  `switchBackDue`, idle, session agreement, no draft and every phase-5
+  guard. A `to: console` switch is never planned for a handle with an
+  entry.
+- **Reset:** a confirmed `to: max` request deletes the entry. An A12
+  supersede neither counts nor resets it (it needs the person's own
+  `/clear` or `/resume`, and the next request may follow at once).
+- **Alert:** `orca-watchdog overflow status` and `orca-watchdog doctor`
+  each print one line per entry with `stuckAt` set whose registration is
   alive and in Console mode: `overflow: <handle> stuck on Console credit
   since <stuckAt> after <failures> failed switches to Max; exit Claude in
   that tab to restart it on Max`. Doctor's exit status does not change
   (it is not an install fault). `--dry-run` writes nothing.
 
-Bound: per wrapper, at most `1 + SWITCH_BACK_RETRIES` switch-back
-requests, so at most 12 `/exit` sends, spaced at least
-`SWITCH_BACK_RETRY_MS` apart between requests; then the existing
-fail-closed `noSwitch` holds.
+Bound: per wrapper, at most `1 + SWITCH_BACK_RETRIES` consecutive counted
+failures before it is pinned and alerted, each followed by at least
+`SWITCH_BACK_RETRY_MS` before the next request, so at most 12 `/exit`
+sends in such a series. Superseded requests (each needs the person's own
+session change) and successful round trips are outside the series.
 
-Tests (Task 4's files, `lib/management.mjs` tests for the alert): a
-`to: max` request exhausts its sends → no `noSwitch`, entry `failures: 1`,
-`nextAt` 30 min on; a tick before `nextAt` plans no switch; at `nextAt`
-with an idle session a new `to: max` request is created. Four failures in
-a row → the fourth adds `noSwitch`, sets `stuckAt`, logs one `warn`, and
-no fifth request is ever created. A confirmed retry deletes the entry. A
-crash after A3 step 1 of a counted failure replays to the same entry (no
-double count). A `to: console` failure still adds `noSwitch` and no
-entry. `status` and `doctor` print the stuck line only while the
-registration is alive and on Console, and doctor's exit status is
-unchanged. Dry run leaves the mode file byte-identical.
+Tests (Task 4's files; `lib/management.mjs` tests for the alert):
+- Each outcome row with a live Console survivor counts, asserted on the
+  durable mode-file effects: `switch retries exhausted`, `generation
+  mismatch`, `successor not registered` (`CONSUMED_BOUND_MS`), `successor
+  session not confirmed` (`CONFIRM_BOUND_MS`, including a `to: console`
+  request whose Console G+1 is alive), `fallback generation`, and an A2
+  launch-reason fail. Each gives `failures: 1`, `nextAt` 30 min on, no
+  `noSwitch`. The same rows with a Max survivor add `noSwitch` and no
+  entry; `wrapper ownership lost` with W dead records nothing.
+- The `to: console` confirm-timeout case then recovers (pid file agrees,
+  idle, deadline passed): no switch before `nextAt`, a `to: max` request
+  at `nextAt`.
+- At `nextAt`, a busy session, a draft, a registration already on Max, or
+  a replacement W (entry pruned, new W has none) gets no retry request.
+- Four counted failures in a row: the fourth adds `noSwitch`, sets
+  `stuckAt`, logs one `warn`; no fifth request is ever created.
+- A confirmed retry deletes the entry. A supersede between retries leaves
+  `failures` unchanged and allows the next request at once.
+- A crash after each of A3 steps 1, 2 and 3 of a counted failure replays
+  to the same entry.
+- `status` and `doctor` print the stuck line only while the registration
+  is alive and on Console; doctor's exit status is unchanged.
+- Dry run leaves the mode file byte-identical.
