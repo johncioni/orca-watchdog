@@ -36,16 +36,23 @@ Claude launch that showed it, which the controller does know:
   (set at each launch, so per generation) is later than
   `creditClearedAt`. A Claude launched before the clear never marks again.
 
-Consequences, accepted (neither charges money: an out-of-credit request
-is refused, spike item 6):
+Consequences, accepted by the orchestrator (neither charges money: an
+out-of-credit request is refused, spike item 6; but a refused turn clears
+an active `/goal`, spike item 4):
 - **Missed mark:** after a clear, a session launched before it that fails
-  again does not mark. The next Console launch that fails marks. Until
-  then, Max-limited sessions may still switch to Console and fail there,
-  as they would have stalled on Max anyway.
+  again does not mark. Credit then still reads available, so the next
+  Max-limited session switches to Console, and its first turn is refused
+  and clears its goal, where with the mark it would have waited on Max
+  with its goal intact. That refusal puts a billing line on a post-clear
+  launch, which the next tick marks. Since `SWITCHES_TO_CONSOLE_PER_TICK`
+  is 1, a miss costs about one extra session's failed turn and its goal.
+  It needs credit to run out first in a pre-clear session, one that had
+  already hit billing and is used again by hand (nothing resumes those:
+  their `limit` and `credits` events stay suppressed).
 - **False mark:** a Console launch after the clear whose resumed screen
   repaints an old billing line from that conversation marks once. Overflow
   then sends new launches to Max until the next `clear-credit`, which
-  `overflow status` shows.
+  `overflow status` shows. Nothing is lost but overflow time.
 
 Tests (Task 4's and Task 3's files): with no clear, a billing line marks,
 as today. After `clear-credit`, a registration launched before the clear
