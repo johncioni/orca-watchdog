@@ -604,3 +604,82 @@ test('doctor and status do not hang on a FIFO state.json and report it as unread
     } finally { h.cleanup(); }
   }
 });
+
+test('overflow enable before setup exits non-zero with the setup instruction', async t => {
+  const h = harness(); t.after(h.cleanup);
+  const result = spawnSync(process.execPath, [CLI, 'overflow', 'enable'], { env: h.env, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /run 'orca-watchdog overflow setup' first/);
+});
+
+test('doctor gives overflow setup advice only when overflow is enabled', async t => {
+  const h = harness(); t.after(() => h.cleanup());
+  const { overflowPaths } = await import('./lib/overflow-state.mjs');
+  const paths = overflowPaths(h.home);
+  const disabled = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.equal(disabled.status, 0, disabled.stderr);
+  assert.match(disabled.stdout, /overflow: disabled/);
+  assert.doesNotMatch(disabled.stdout, /run 'orca-watchdog overflow setup'/);
+  assert.equal(fs.existsSync(paths.consoleDir), false);
+  fs.mkdirSync(paths.dir, { recursive: true }); fs.writeFileSync(paths.enabledFile, '');
+  const enabled = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.match(enabled.stdout, /overflow: enabled/);
+  assert.match(enabled.stdout, /not ready; run 'orca-watchdog overflow setup' first/);
+});
+
+test('doctor exits non-zero for enabled overflow whose Console dir is not ready', async t => {
+  const h = harness(); t.after(() => h.cleanup());
+  const { overflowPaths } = await import('./lib/overflow-state.mjs');
+  const paths = overflowPaths(h.home);
+  const before = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.equal(before.status, 0, before.stderr);
+  fs.mkdirSync(paths.dir, { recursive: true }); fs.writeFileSync(paths.enabledFile, '');
+  const after = spawnSync(process.execPath, [CLI, 'doctor'], { env: h.env, encoding: 'utf8' });
+  assert.equal(after.status, 1, after.stderr);
+  assert.match(after.stdout, /Console setup: not ready/);
+});
+
+test('overflow setup, enable, disable and doctor report readiness without changing the service', async t => {
+  const h = harness(); t.after(h.cleanup);
+  const { runCli, doctorText } = await loadManagement();
+  const { isEnabled } = await import('./lib/overflow-state.mjs');
+  let output = ''; const options = { env: h.env, stdout: { write: text => { output += text; } } };
+  assert.equal(await runCli(['overflow', 'setup'], options), 0);
+  assert.match(output, /Console config ready/);
+  assert.match(output, /CLAUDE_CONFIG_DIR=/);
+  assert.equal(isEnabled({ home: h.home }), false);
+  assert.equal(await runCli(['overflow', 'enable'], options), 0);
+  assert.equal(isEnabled({ home: h.home }), true);
+  assert.match(doctorText({ env: h.env }).text, /overflow: enabled/);
+  assert.match(doctorText({ env: h.env }).text, /Console setup: ready/);
+  assert.equal(await runCli(['overflow', 'disable'], options), 0);
+  assert.equal(isEnabled({ home: h.home }), false);
+  assert.equal(fs.existsSync(h.launchctlState), false);
+});
+
+test('overflow clear-credit nulls only creditExhaustedUntil and keeps evidence', async t => {
+  const h = harness(); t.after(h.cleanup);
+  const { runCli } = await loadManagement();
+  const { updateMode, readMode } = await import('./lib/overflow-state.mjs');
+  const opts = { home: h.home };
+  const before = await updateMode(() => ({ until: '2099-01-01T00:00:00Z', creditExhaustedUntil: '2099-02-01T00:00:00Z',
+    lastError: 'keep error', noSwitch: ['pane:1'], evidence: { pane: { resetAt: '2099-01-01T00:00:00Z' } } }), opts);
+  assert.equal(await runCli(['overflow', 'clear-credit'], { env: h.env, stdout: { write() {} } }), 0);
+  assert.deepEqual(readMode(opts), { ...before, creditExhaustedUntil: null });
+});
+
+test('overflow status prints launch mode, marks, errors, live registrations and requests', async t => {
+  const h = harness(); t.after(h.cleanup);
+  const { runCli } = await loadManagement();
+  const state = await import('./lib/overflow-state.mjs');
+  const opts = { home: h.home }, paths = state.overflowPaths(h.home);
+  await state.updateMode(() => ({ until: '2099-01-01T00:00:00Z', lastError: 'unseeded cwd', noSwitch: ['pane:1'] }), opts);
+  fs.writeFileSync(paths.enabledFile, '');
+  state.updateRegistration({ handle: 'pane', wrapperPid: process.pid, mode: 'console', model: 'opus', eligible: true, sessionId: '12345678-abcdef' }, opts);
+  await state.updateRequest('orphan', () => ({ state: 'consumed', to: 'max', generation: 2 }), opts);
+  let output = '';
+  assert.equal(await runCli(['overflow', 'status'], { env: h.env, stdout: { write: text => { output += text; } } }), 0);
+  for (const value of ['launch mode: console', 'until: 2099-01-01T00:00:00Z', 'creditExhaustedUntil: none', 'lastError: unseeded cwd',
+    'noSwitch: pane:1', 'pane', 'console', 'opus', 'eligible=true', '12345678', 'orphan', 'consumed', 'max']) assert.ok(output.includes(value), value);
+  assert.ok(!output.includes('12345678-abcdef'));
+});

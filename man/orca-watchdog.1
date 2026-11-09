@@ -57,6 +57,11 @@ Print the most recent activity, read\-only. See
 .B LOGS
 below for options.
 .TP
+.B overflow
+Configure Console account overflow. See
+.B OVERFLOW
+below for subcommands.
+.TP
 .B \-\-dry\-run
 Run one observation\-only tick and report what it would do. Never sends terminal
 input and never writes state.
@@ -66,6 +71,43 @@ Show a usage summary.
 .TP
 .B \-\-version
 Show the installed version.
+.SH OVERFLOW
+.B orca\-watchdog overflow
+accepts one of the following subcommands. Overflow is off by default.
+This release includes setup and the wrapper; the automatic switch controller
+is still pending. These commands do not start or stop the service.
+.TP
+.B setup
+Prepare ~/.claude\-console and seed onboarding. Share projects, settings.json,
+plugins, skills, agents and commands from ~/.claude when they exist.
+Leave conflicting entries untouched and report them as skipped.
+Create an empty read\-only agent\-memory directory. Do not copy credentials,
+CLAUDE.md or .claude.json. Existing account fields and correct links are preserved.
+Log in separately with the exact CLAUDE_CONFIG_DIR path printed by setup.
+.TP
+.B enable
+Enable overflow after setup is ready. Does not check the Console login.
+.TP
+.B disable
+Prevent new Console launches without deleting the window or switch state.
+.TP
+.B status
+Print launch mode, window deadline, credit mark, last error, blocked switches,
+live registrations (including session ID prefixes), and pending or consumed requests.
+.TP
+.B clear\-credit
+Clear only the exhausted\-credit mark; preserve the window and switch evidence.
+.PP
+Before each Console launch, claude\-overflow copies project trust from the Max
+config under Claude's lock directory. For every such project, it marks external
+CLAUDE.md imports approved and the import warning shown, even if Max never
+approved those imports or declined them. Console loads those imports without asking.
+Repository subdirectories and linked worktrees use the main repository's key.
+A missing exact Max project entry, missing trust at that key or an ancestor,
+or lock timeout launches on Max
+and records the cwd and reason in the activity log.
+.B doctor
+reports setup readiness without inspecting credentials.
 .SH LOGS
 .B orca\-watchdog logs
 prints the latest 100 activity lines by default. It is read\-only and never

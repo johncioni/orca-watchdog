@@ -79,6 +79,10 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
       fs.rmSync(home, { recursive: true, force: true });
     });
     const paths = state.overflowPaths(home);
+    fs.mkdirSync(paths.consoleDir);
+    fs.writeFileSync(path.join(paths.consoleDir, '.claude.json'), '{}');
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [fs.realpathSync(home)]: {
+      hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: true, hasClaudeMdExternalIncludesWarningShown: true } } }));
     fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(paths.enabledFile, '', { mode: 0o600 });
     return { home, paths, cleanups };
@@ -101,7 +105,7 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
       FAKE_CLAUDE_LOG: path.join(opts.home, 'launches.jsonl'), CLAUDE_CODE_TMPDIR: '/unchanged/tmp',
       OVERFLOW_WRAPPER_WORKER: '1', WRAPPER_ARGV: JSON.stringify(argv), ...overrides };
     for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
-    const child = fork(self, [], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [] });
+    const child = fork(self, [], { env, cwd: opts.home, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], execArgv: [] });
     const next = mailbox(child), exited = once(child, 'exit');
     let stderr = ''; child.stderr.on('data', b => { stderr += b; });
     opts.cleanups.push(async () => { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await exited; } });
@@ -123,6 +127,25 @@ if (process.env.OVERFLOW_WRAPPER_WORKER) {
   }
   async function consoleWindow(opts) { await state.updateMode(() => ({ until: new Date(start + 3600000).toISOString() }), opts); }
   function logs(opts) { return fs.readFileSync(path.join(opts.home, 'launches.jsonl'), 'utf8').trim().split('\n').map(JSON.parse); }
+
+  for (const reason of ['unseeded', 'lock-timeout']) test(`${reason} cwd launches on Max and records the failed preflight`, async t => {
+    const opts = fixture(t);
+    const w = launch(t, opts, ['--model', 'opus', 'hello'], { WRAPPER_FLOCK_TIMEOUT: '0' });
+    await w.next('ready');
+    if (reason === 'unseeded') fs.writeFileSync(path.join(opts.home, '.claude.json'), '{"projects":{}}');
+    else fs.mkdirSync(path.join(opts.paths.consoleDir, '.claude.json.lock'));
+    await consoleWindow(opts); await request(opts);
+    w.command({ type: 'exit', code: 0 }); await w.next('ready');
+    assert.equal(logs(opts).length, 2);
+    assert.equal(logs(opts)[1].CLAUDE_CONFIG_DIR, null);
+    assert.equal(logs(opts)[1].argv.at(-1), MAX_MESSAGE);
+    assert.deepEqual(state.readRequest('pane', opts).launch, { mode: 'max', reason: `preflight:${reason}` });
+    const lines = fs.readFileSync(path.join(opts.home, '.local/state/orca-watchdog/watchdog.log'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.ok(lines[0].includes(fs.realpathSync(opts.home)));
+    assert.ok(lines[0].includes(reason));
+    assert.equal(await finish(w), 0);
+  });
 
   for (const [name, argv, env, disable] of [
     ['not enabled passes through unregistered', ['--model', 'opus', 'hello'], {}, true],

@@ -3,7 +3,7 @@
 # The command takes no filename arguments.
 complete -c orca-watchdog -f
 
-set -l cmds doctor start stop pause resume status logs
+set -l cmds doctor start stop pause resume status logs overflow
 
 # Top-level commands (offered until a subcommand has been typed).
 complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -a doctor -d 'Check macOS, Node, Orca, launchd, pause, and event state'
@@ -13,6 +13,9 @@ complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -a pause -d
 complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -a resume -d 'Re-enable watchdog activity'
 complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -a status -d 'Show service health, pause state, and active events'
 complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -a logs -d 'Show recent activity or launchd output (read-only)'
+
+complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -a overflow -d 'Configure and inspect Console account overflow'
+complete -c orca-watchdog -n "__fish_seen_subcommand_from overflow; and test (count (commandline -opc)) -eq 2" -a 'setup enable disable status clear-credit'
 
 # Top-level flags.
 complete -c orca-watchdog -n "not __fish_seen_subcommand_from $cmds" -l help -d 'Show help'

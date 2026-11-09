@@ -5,7 +5,7 @@ _orca_watchdog() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-  local commands="doctor start stop pause resume status logs --help --version --dry-run"
+  local commands="doctor start stop pause resume status logs overflow --help --version --dry-run"
 
   # First token after the program name selects a command.
   if [[ $COMP_CWORD -eq 1 ]]; then
@@ -13,7 +13,12 @@ _orca_watchdog() {
     return
   fi
 
-  # Only the 'logs' command takes further options.
+  if [[ "${COMP_WORDS[1]}" == "overflow" && $COMP_CWORD -eq 2 ]]; then
+    COMPREPLY=( $(compgen -W "setup enable disable status clear-credit" -- "$cur") )
+    return
+  fi
+
+  # Options for the 'logs' command.
   if [[ "${COMP_WORDS[1]}" == "logs" ]]; then
     case "$prev" in
       --source)
