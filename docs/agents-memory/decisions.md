@@ -7,7 +7,7 @@ Newest first. Format and rules: `README.md` in this directory.
 A Console session whose newest output is Claude's own billing error marks credit and switches back to
 Max before the reset, under every switch-back guard, so `clear-credit` sticks (DOG-83). A failed switch
 that leaves the survivor on Console counts by surviving mode, retries every 30 min up to 3 times, then
-pins with a stuck alert (DOG-84). The billing line is matched as drawn, anchored on its URL (A16).
+pins with a stuck alert (DOG-84). The line is matched as drawn; only a wrapped URL must complete the known one (A16).
 PR: https://github.com/johncioni/orca-watchdog/pull/131, https://github.com/johncioni/orca-watchdog/pull/132, https://github.com/johncioni/orca-watchdog/pull/133
 
 ## 2026-11-09: Overflow supersedes a changed-session switch and bounds the locked `/exit`
