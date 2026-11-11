@@ -3,6 +3,7 @@ name: review-evidence
 # Deterministic gate — no AI, no external service, nothing to rate-limit.
 # Every PR body must carry review evidence:
 #   Reviewed by <reviewer>, N round(s)      -> pass
+#   Refresh of main at <sha>: no review (clean merge) -> pass only after verifying facts 1–5
 #   Review skipped: <rule>                  -> pass only if the diff is skip-eligible:
 #                                              no invariant path touched (see .github/review-invariants.txt;
 #                                              matched ignoring ASCII case; any non-ASCII path counts as one)
@@ -17,7 +18,7 @@ name: review-evidence
 # 'Reviewed by' line to its body. Fails CLOSED on any API error.
 #
 # Uses pull_request_target on purpose: the job never checks out or executes PR
-# code (API reads only), and the base-branch copy of this workflow + the
+# code (API reads and bare git object operations only), and the base-branch copy of this workflow + the
 # invariants list is what runs — so a PR cannot neuter the gate by editing
 # either file. Token is read-only.
 
@@ -44,6 +45,7 @@ jobs:
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check review evidence
@@ -62,6 +64,106 @@ jobs:
             | perl -0pe 's/<!--.*?-->//gs; s/^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[^\n]*\n?//gms; s/^[ \t]*(`{3,}|~{3,}).*\z//ms')"
 
           prefix='^[[:space:]]*(>[[:space:]]*)?(#{1,6}[[:space:]]+)?([-*+][[:space:]]+)?(\*\*)?'
+          refresh_pattern='^(Refresh of main at [0-9a-f]{40}: no review \(clean merge\)|\*\*Refresh of main at [0-9a-f]{40}: no review \(clean merge\)\*\*)$'
+          refresh_lines="$(grep -E "$refresh_pattern" <<<"$body" || true)"
+          if [[ -n "$refresh_lines" ]]; then
+            if [[ "$refresh_lines" == *$'\n'* ]]; then
+              echo '::error::clean refresh requires exactly one refresh line'; exit 1
+            fi
+            if grep -Eiq "${prefix}reviewed by([[:space:]]|$)" <<<"$body"; then
+              echo '::error::clean refresh cannot also carry Reviewed by evidence'; exit 1
+            fi
+            if [[ "$body" == *'<!--'* ]]; then
+              echo '::error::clean refresh body has an unclosed HTML comment'; exit 1
+            fi
+            [[ "$refresh_lines" =~ [0-9a-f]{40} ]]
+            refresh_sha="${BASH_REMATCH[0]}"
+            refresh_fail() {
+              echo "::error::clean refresh fact $1 failed: $2"; exit 1
+            }
+
+            # Facts 1–4 come from read-only API calls, each bound to its failure fact.
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")" \
+              || refresh_fail 1 'unable to read API data'
+            repo_json="$(gh api "repos/${GITHUB_REPOSITORY}")" \
+              || refresh_fail 1 'unable to read API data'
+            base_ref="$(jq -er '.base.ref | select(type == "string" and length > 0)' <<<"$pr_json")" \
+              || refresh_fail 1 'base must differ from the default branch main'
+            default_branch="$(jq -er '.default_branch' <<<"$repo_json")" \
+              || refresh_fail 1 'base must differ from the default branch main'
+            [[ "$default_branch" == main && "$base_ref" != "$default_branch" ]] \
+              || refresh_fail 1 'base must differ from the default branch main'
+
+            head_sha="$(jq -er '.head.sha' <<<"$pr_json")" \
+              || refresh_fail 2 'invalid PR head SHA'
+            [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$head_sha" == "$HEAD_SHA" ]] \
+              || refresh_fail 2 'invalid PR head SHA'
+            commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head_sha}")" \
+              || refresh_fail 2 'unable to read API data'
+            parents="$(jq -er '.parents | select(type == "array" and length == 2) |
+              map(.sha | select(type == "string" and test("^[0-9a-f]{40}$"))) |
+              select(length == 2) | join(" ")' <<<"$commit_json")" \
+              || refresh_fail 2 'head must have exactly two parents'
+            read -r p1 p2 <<<"$parents"
+
+            encoded_base="$(jq -rn --arg ref "$base_ref" '$ref | @uri')" \
+              || refresh_fail 3 'invalid base branch'
+            branch_json="$(gh api "repos/${GITHUB_REPOSITORY}/branches/${encoded_base}")" \
+              || refresh_fail 3 'unable to read API data'
+            base_head="$(jq -er '.commit.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$branch_json")" \
+              || refresh_fail 3 'invalid base head SHA'
+            [[ "$p1" == "$base_head" ]] \
+              || refresh_fail 3 "the base moved: redo the refresh on $base_head"
+
+            [[ "$p2" == "$refresh_sha" ]] \
+              || refresh_fail 4 'second parent does not match the evidence SHA'
+            compare_json="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${p2}...main")" \
+              || refresh_fail 4 'unable to read API data'
+            comparison="$(jq -er '.status' <<<"$compare_json")" \
+              || refresh_fail 4 'second parent must be an ancestor of main or equal to it'
+            [[ "$comparison" == ahead || "$comparison" == identical ]] \
+              || refresh_fail 4 'second parent must be an ancestor of main or equal to it'
+
+            # Fact 5: fetch objects into a fresh bare repo; never check out PR code.
+            bare="$(mktemp -d "${RUNNER_TEMP:-/tmp}/review-evidence.XXXXXX")" \
+              || refresh_fail 5 'unable to create the bare repository'
+            trap 'rm -rf -- "$bare"' EXIT
+            export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
+            git init --bare --template= "$bare" >/dev/null \
+              || refresh_fail 5 'unable to initialise the bare repository'
+            repo_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+            fetch_config=(-c protocol.allow=never -c protocol.https.allow=always)
+            if [[ "$GITHUB_SERVER_URL" == file://* ]]; then
+              fetch_config+=(-c protocol.file.allow=always)
+            else
+              auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" \
+                || refresh_fail 5 'unable to prepare fetch authentication'
+              fetch_config+=(-c "http.${repo_url}.extraheader=AUTHORIZATION: basic ${auth}")
+            fi
+            git -C "$bare" "${fetch_config[@]}" fetch --no-tags "$repo_url" \
+              "$p1" "refs/pull/${PR_NUMBER}/head:refs/refresh/head" >/dev/null \
+              || refresh_fail 5 'unable to fetch refresh objects'
+            fetched_head="$(git -C "$bare" rev-parse --verify refs/refresh/head)" \
+              || refresh_fail 5 'unable to read the fetched PR head'
+            [[ "$fetched_head" == "$HEAD_SHA" ]] \
+              || refresh_fail 5 'fetched PR head does not match the event head'
+            merge_status=0
+            merged_tree="$(git -C "$bare" --attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904 \
+              -c core.attributesFile=/dev/null merge-tree --write-tree --no-messages "$p1" "$p2")" \
+              || merge_status=$?
+            case "$merge_status" in
+              0) ;;
+              1) refresh_fail 5 'canonical merge is conflicted' ;;
+              *) refresh_fail 5 'unable to compute the canonical merge' ;;
+            esac
+            head_tree="$(git -C "$bare" rev-parse --verify "${head_sha}^{tree}")" \
+              || refresh_fail 5 'unable to read the PR head tree'
+            [[ "$merged_tree" =~ ^[0-9a-f]{40}$ && "$merged_tree" == "$head_tree" ]] \
+              || refresh_fail 5 'canonical merge tree does not match the PR head tree'
+            echo "::notice::clean refresh of main at $p2 into $base_ref"
+            exit 0
+          fi
+
           if grep -Eiq "${prefix}reviewed by[[:space:]]+[^,[:space:]<][^,]*,[[:space:]]*[1-9][0-9]*[[:space:]]+rounds?([^[:alnum:]]|$)" <<<"$body"; then
             echo "::notice::review evidence present: $(grep -Ei "${prefix}reviewed by" <<<"$body" | head -1)"
             exit 0
