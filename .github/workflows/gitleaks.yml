@@ -173,6 +173,42 @@ jobs:
             fi
           fi
 
+      # Close extension loads from the PR checkout or a URL; mirrors
+      # refresh-merge precondition 3 (OPS-230).
+      - name: Refuse extended trusted configs
+        run: |
+          python3 -I - "${RUNNER_TEMP}/gitleaks.toml" <<'PY'
+          import sys
+          import tomllib
+
+          def paths(value, prefix=()):
+              if isinstance(value, dict):
+                  for key, child in value.items():
+                      segments = tuple(key.lower().split('.'))
+                      if any(not segment.isascii() for segment in segments):
+                          raise ValueError('trusted config has a non-ASCII key segment')
+                      path = prefix + segments
+                      yield path
+                      yield from paths(child, path)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from paths(child, prefix)
+
+          try:
+              try:
+                  with open(sys.argv[1], 'rb') as source:
+                      config = tomllib.load(source)
+              except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+                  raise ValueError('trusted config does not parse: ' + str(error))
+              for path in paths(config):
+                  if len(path) > 1 and path[0] == 'extend' and path[1] not in ('usedefault', 'disabledrules'):
+                      raise ValueError('trusted config extends another config')
+          except (ValueError, OSError) as error:
+              print('::error::' + str(error))
+              sys.exit(1)
+          print('trusted config extends nothing else')
+          PY
+
       # `git` is the current subcommand; `detect` is retained for compatibility
       # but hidden from help in 8.x. --redact so a real finding never echoes the
       # secret into CI logs.
