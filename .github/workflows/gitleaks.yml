@@ -184,9 +184,9 @@ jobs:
           def paths(value, prefix=()):
               if isinstance(value, dict):
                   for key, child in value.items():
-                      segments = tuple(key.lower().split('.'))
-                      if any(not segment.isascii() for segment in segments):
+                      if not key.isascii():
                           raise ValueError('trusted config has a non-ASCII key segment')
+                      segments = tuple(key.lower().split('.'))
                       path = prefix + segments
                       yield path
                       yield from paths(child, path)
