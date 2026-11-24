@@ -9,12 +9,13 @@ name: review-evidence
 #                                              matched ignoring ASCII case; any non-ASCII path counts as one)
 #                                              no changed file retaining a suppression or changing what a
 #                                              required lint, type, test or scan check runs
+#                                              no test line deleted (a test file's line deleted or changed, or the file removed or renamed)
 #                                              and (docs/test-only OR <= MAX_SKIP_LINES changed)
 # Docs are *.md and *.mdx anywhere, a root LICENSE* or CHANGELOG*, and text, HTML, JSON,
 # image and PDF files under docs/.
 # Renovate/Dependabot PRs are exempt only while they touch no invariant path
-# and pass the suppression and check-config rules; a bot PR that fails either
-# needs a human to run a review round and add the
+# and pass the suppression, check-config and test-line rules; a bot PR that fails
+# any needs a human to run a review round and add the
 # 'Reviewed by' line to its body. Fails CLOSED on any API error.
 #
 # Uses pull_request_target on purpose: the job never checks out or executes PR
@@ -209,19 +210,22 @@ jobs:
           if [[ -n "$files_raw" ]]; then
             file_fields="$(jq -rn '
               def required: if type == "string" and length > 0 then . else error("missing file field") end;
-              inputs | [(.filename | required), (.status | required), ((.previous_filename // "") + ".")] | @tsv
+              def deletion_count: if type == "number" and . >= 0 and . == floor then . else error("invalid deletions") end;
+              inputs | [(.filename | required), (.status | required), ((.previous_filename // "") + "."),
+                (.deletions | deletion_count), has("patch")] | @tsv
               ' <<<"$files_raw")" \
               || { echo "::error::unexpected changed-file entry from the API — refusing skip"; exit 1; }
           fi
           files=()
-          filenames=() previous_filenames=() statuses=()
-          while IFS=$'\t' read -r filename status previous; do
+          filenames=() previous_filenames=() statuses=() file_deletions=() has_patches=()
+          while IFS=$'\t' read -r filename status previous deleted has_patch; do
             [[ -z "$filename" ]] && continue
             printf -v filename '%b' "$filename"
             printf -v previous '%b' "$previous"
             previous="${previous%.}"
             status="$(printf '%b' "$status")"
             filenames+=("$filename") previous_filenames+=("$previous") statuses+=("$status")
+            file_deletions+=("$deleted") has_patches+=("$has_patch")
             files+=("$filename")
             if [[ -n "$previous" ]]; then files+=("$previous"); fi
           done <<<"$file_fields"
@@ -288,6 +292,12 @@ jobs:
               *) return 1 ;;
             esac
           }
+          is_test() {
+            case "$1" in
+              *.test.*|*.spec.ts|*.spec.tsx|*.spec.js|*.spec.jsx|*.spec.mjs|*Tests.swift|tests/*|*/tests/*|test/*|*/test/*|*/__tests__/*|*/__fixtures__/*|*/fixtures/*|e2e/*|*/e2e/*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
 
           head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
           if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
@@ -351,6 +361,14 @@ jobs:
           hits=()
           for i in "${!filenames[@]}"; do
             filename="${filenames[i]}" previous="${previous_filenames[i]}" status="${statuses[i]}"
+            if is_test "$filename" || { [[ -n "$previous" ]] && is_test "$previous"; }; then
+              if [[ -n "$previous" && "$previous" != "$filename" ]] ||
+                 { [[ "$status" != added ]] &&
+                   { [[ "$status" != modified && "$status" != changed ]] ||
+                     [[ "${file_deletions[i]}" != 0 || "${has_patches[i]}" != true ]]; }; }; then
+                hits+=("$filename: test line deleted")
+              fi
+            fi
             manifest_path=''
             for f in "$filename" "$previous"; do
               [[ -z "$f" ]] && continue
@@ -417,9 +435,9 @@ jobs:
           if ((${#hits[@]})); then
             printf '%s\n' "${hits[@]}"
             if $bot; then
-              echo "::error::dependency bot '$PR_AUTHOR' changes a file that holds a suppression, or changes what a required check runs; review it and add 'Reviewed by <reviewer>, N rounds' to the PR body."
+              echo "::error::dependency bot '$PR_AUTHOR' changes a file that holds a suppression, changes what a required check runs, or deletes a test line; review it and add 'Reviewed by <reviewer>, N rounds' to the PR body."
             else
-              echo "::error::Review skipped, but the diff changes a file that holds a suppression, or changes what a required check runs; run a review round and record 'Reviewed by <reviewer>, N rounds'."
+              echo "::error::Review skipped, but the diff changes a file that holds a suppression, changes what a required check runs, or deletes a test line; run a review round and record 'Reviewed by <reviewer>, N rounds'."
             fi
             exit 1
           fi
@@ -433,10 +451,7 @@ jobs:
           for f in "${files[@]}"; do
             if is_excluded "$f"; then docs_or_tests_only=false; break; fi
             if is_docs "$f"; then continue; fi
-            case "$f" in
-              *.test.*|*.spec.ts|*.spec.tsx|*.spec.js|*.spec.jsx|*.spec.mjs|*Tests.swift|tests/*|*/tests/*|test/*|*/test/*|*/__tests__/*|*/__fixtures__/*|*/fixtures/*|e2e/*|*/e2e/*) ;;
-              *) docs_or_tests_only=false; break ;;
-            esac
+            if ! is_test "$f"; then docs_or_tests_only=false; break; fi
           done
 
           if $docs_or_tests_only; then
