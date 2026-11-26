@@ -6,8 +6,8 @@ agents read `AGENTS.md`, which is a symlink to this file. Keep it that way.
 ## Project memory
 
 `docs/agents-memory/` is the durable, cross-agent memory for this repo
-(rules: `~/.agents/MODELS.md`, "Project memory"). Read both files before the
-first edit. Only the orchestrator writes there, in reviewed memory PRs.
+(rules: `~/.agents/AGENTS.md`, "Project memory"). Read both files before the
+first edit. Add an entry in the same PR as the work that taught it.
 
 @docs/agents-memory/decisions.md
 @docs/agents-memory/ruled-out.md
@@ -43,9 +43,10 @@ Linear team **Orca Watchdog**, key `DOG`, workspace `johncioni`.
 
 ## Working agreement
 
-- Launch recipes, terminal hygiene, and worker supervision live in
-  `~/.agents/ORCHESTRATION.md`; roles, models, effort, and the review loop in
-  `~/.agents/MODELS.md`. This file adds only project-specific rules.
+- Roles, models and the review rule are in `~/.agents/AGENTS.md`; how a
+  coordinator runs work through Orca is in the coordinator skill
+  (`~/.agents/skills/coordinator/SKILL.md`). This file adds only
+  project-specific rules.
 - **Proceed autonomously on clear next steps.** When a step finishes and the
   next action is well-defined and low-ambiguity — merging an approved /
   CI-green PR, advancing to the next task in an approved plan, running the
@@ -74,28 +75,23 @@ node watchdog.mjs --status  # active events
 No package.json by design: the daemon must run with only the system Node.
 Do not add dependencies.
 
-## Review loop
+## Review and merging
 
-**Required checks:** `ci`, `gitleaks`, `review-evidence`.
+**Required checks:** `ci`, `gitleaks`.
 
-**Invariant files (ineligible for the docs/test/size skips):** `watchdog.mjs` (the daemon
+**Always reviewed (no docs-only, test-only or size skip):** `watchdog.mjs` (the daemon
 itself: a bug here can spam `orca terminal send` into every session),
 `lib/*` (the daemon's runtime, and `lib/management.mjs`, which writes the
 launchd plist and runs launchctl bootstrap/bootout), `install.sh` /
 `uninstall.sh` and the `scripts/*-archive.mjs` they exec,
 `scripts/build-release.mjs` (the release smoke the `ci` check runs),
 `orca.yaml` / `scripts/orca-setup.sh` (execute on every
-`orca worktree create`), `.github/*`, `CLAUDE.md`, the agent and tool
-config `~/.agents/MODELS.md` "One round" names (at any depth),
-`docs/agents-memory/*` (imported into every session).
+`orca worktree create`), `.github/*`, `CLAUDE.md` and other agent and tool
+config, `docs/agents-memory/*` (imported into every session).
 
 **Branch protection is strict:** `main` requires the PR branch to be up to
-date. `~/.agents/merge-reviewed-pr.sh` updates a `BEHIND` branch and waits for
-the checks at merge time. A branch that still needs commits takes main through
-`start-worker-merge`, not `gh pr update-branch` (`~/.agents/RUNBOOK.md`, "Merge
-conflicts"), since a worker's worktree takes no bare git
-(`~/.agents/ORCHESTRATION.md`, "Dispatch rules"). Never `--admin`, never a
-force-push.
+date. Bring a `BEHIND` branch up to date with `gh pr update-branch`, then wait
+for the checks again. Never `--admin`, never a force-push.
 
 ## Orca (the ADE this project lives in)
 

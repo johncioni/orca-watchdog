@@ -66,10 +66,10 @@ checksum, which is what the Homebrew formula pins.
 
 ## A note on this repository's maintenance workflow
 
-The `CLAUDE.md` / `AGENTS.md` files and the `review-evidence` pull-request check
-describe the maintainer's personal, agent-assisted workflow. **Contributors do
-not need to follow it** — maintainers complete the review-evidence line when a
-change is merged. Your job is just the code and its tests.
+The `CLAUDE.md` / `AGENTS.md` files describe the maintainer's personal,
+agent-assisted workflow. **Contributors do not need to follow it** — maintainers
+complete the review line in the pull request when a change is merged. Your job
+is just the code and its tests.
 
 By contributing, you agree that your contributions are licensed under the
 project's [MIT license](LICENSE).
